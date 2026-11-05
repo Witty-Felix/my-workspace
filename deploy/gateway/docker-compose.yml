@@ -1,0 +1,25 @@
+services:
+  gateway:
+    image: nginx:alpine
+    container_name: gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - vbcd
+      - workbench
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  vbcd:
+    external: true
+    name: vbcd_internal
+  workbench:
+    external: true
+    name: workbench_default

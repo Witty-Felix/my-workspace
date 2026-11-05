@@ -34,7 +34,9 @@ let editState = null;
 /* ---------------- 网络 ---------------- */
 
 async function api(path, opts) {
-  const res = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
+  // 用相对路径：既能直连 :8090 的根路径，也能挂在 /workbench/ 子路径下
+  const url = path.replace(/^\//, '');
+  const res = await fetch(url, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
   if (!res.ok) {
     let msg = `请求失败（${res.status}）`;
     try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}

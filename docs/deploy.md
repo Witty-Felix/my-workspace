@@ -10,7 +10,9 @@
 | 端口 | 宿主 `8090` → 容器 `8090` |
 | 数据 | `/opt/workbench/data/data.json`（挂载进容器 `/app/data`） |
 | 备份 | 同目录 `data.json.bak`，每次写入前的上一版 |
-| 访问 | `http://139.224.192.94:8090`（需在轻量应用服务器控制台的「防火墙」放行 8090/TCP） |
+| 访问 | **`http://139.224.192.94/workbench/`**（80 由 gateway 容器按路径分发） |
+| 备用入口 | `http://139.224.192.94:8090/`（直连 workbench，绕过网关） |
+| 网关 | `gateway` 容器（`nginx:alpine`），配置在 `/opt/gateway`，同仓库 `deploy/gateway/` |
 | 登录 | HTTP Basic，凭据在 `/opt/workbench/.env`（`/api/health` 例外，匿名可访问，供容器探针用） |
 
 ## 首次部署（已完成，留档）
@@ -25,6 +27,25 @@ cd /opt/workbench
 printf 'AUTH_USER=joye\nAUTH_PASS=<密码>\n' > .env && chmod 600 .env
 docker compose up -d --build
 ```
+
+## 80 端口网关
+
+`:80` 不是 buddy 的 nginx 了，是 `gateway` 容器（ADR-0003）。它按路径分发：
+
+| 路径 | 去向 |
+|---|---|
+| `/workbench/` | `workbench:8090`（剥掉前缀） |
+| `/workbench` | 301 到 `/workbench/`（少了这一跳，页面里的相对路径会解析到根） |
+| 其余全部 | `web:80`（buddy） |
+
+它同时接入 `vbcd_internal` 与 `workbench_default` 两个网络，所以能按服务名找到两边。改配置后：
+
+```bash
+scp deploy/gateway/nginx.conf root@139.224.192.94:/opt/gateway/
+ssh root@139.224.192.94 "docker exec gateway nginx -t && docker exec gateway nginx -s reload"
+```
+
+buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/docker-compose.yml`，改前备份为 `docker-compose.yml.bak-*`）。**它不是本仓库的文件**，日后 buddy 若拉上游新版本，需要重新合并这一行。
 
 ## 日常更新
 

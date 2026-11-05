@@ -272,14 +272,14 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .acts button[disabled]:hover { background: transparent; color: var(--muted); }
 
 .add {
-  border: 1px dashed var(--line-soft);
+  border: 1px solid transparent;
   background: transparent;
-  color: #b9c4d6;
+  color: #c2cbda;
   border-radius: 10px;
-  height: 30px;
-  font-size: 16px;
+  height: 32px;
+  font-size: 15px;
   line-height: 1;
-  opacity: .55;
+  opacity: .7;
   transition: opacity .15s, border-color .15s, color .15s, background .15s;
 }
 .day:hover .add { opacity: 1; }
