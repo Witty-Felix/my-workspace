@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f5f7fb">
+<title>周工作台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand"><i class="mark"></i><span>周工作台</span></div>
+  <nav class="nav">
+    <button class="ic" id="prev" aria-label="上一周">‹</button>
+    <button class="wk" id="wkBtn" title="回到本周">
+      <span class="wk-key" id="wkKey">—</span>
+      <span class="wk-range" id="wkRange">—</span>
+    </button>
+    <button class="ic" id="next" aria-label="下一周">›</button>
+    <button class="pill" id="todayBtn">本周</button>
+  </nav>
+</header>
+
+<main class="stage">
+  <section class="week" id="week" aria-label="一周时间线"></section>
+
+  <section class="phone" id="phone" aria-label="按天查看">
+    <div class="phone-nav">
+      <button class="ic" id="pPrev" aria-label="前一天">‹</button>
+      <div class="phone-day" id="pDay">—</div>
+      <button class="ic" id="pNext" aria-label="后一天">›</button>
+    </div>
+    <div class="phone-list" id="pList"></div>
+  </section>
+</main>
+
+<dialog id="editor" class="editor">
+  <form id="form" novalidate>
+    <p class="ed-date" id="edDate">—</p>
+    <div class="seg" id="seg">
+      <label><input type="radio" name="slot" value="am"><span>上午</span></label>
+      <label><input type="radio" name="slot" value="pm"><span>下午</span></label>
+      <label><input type="radio" name="slot" value="eve"><span>晚上</span></label>
+    </div>
+    <input id="fTitle" class="in" maxlength="80" placeholder="要做什么？" autocomplete="off">
+    <textarea id="fNote" class="in" maxlength="500" rows="2" placeholder="备注（可选）"></textarea>
+    <p class="err" id="err" hidden></p>
+    <div class="foot">
+      <button type="button" class="btn danger" id="delBtn" hidden>删除</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" id="cancelBtn">取消</button>
+      <button type="submit" class="btn primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
