@@ -4,6 +4,8 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+// 领域常量与排序规则：与浏览器共用同一份（app/lib/domain.js）
+const { SLOTS, compareArrangements, groupKey, byOrder } = require('./lib/domain');
 
 const PORT = Number(process.env.PORT || 8090);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -13,7 +15,6 @@ const AUTH_USER = process.env.AUTH_USER || '';
 const AUTH_PASS = process.env.AUTH_PASS || '';
 // AUTH=off 显式关闭登录：默认仍是 basic，避免误删凭据就把站点裸奔出去
 const AUTH_OFF = String(process.env.AUTH || 'basic').toLowerCase() === 'off';
-const SLOTS = ['am', 'pm', 'eve'];
 
 if (!AUTH_OFF && (!AUTH_USER || !AUTH_PASS)) {
   console.error('[fatal] AUTH_USER / AUTH_PASS 未设置，拒绝启动（fail-closed）。确需免登录请设 AUTH=off');
@@ -46,23 +47,15 @@ function save(next) {
   cache = next;
 }
 
-function bySortOrder(a, b) {
-  if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-  const sa = SLOTS.indexOf(a.slot);
-  const sb = SLOTS.indexOf(b.slot);
-  if (sa !== sb) return sa - sb;
-  return (a.order || 0) - (b.order || 0);
-}
-
 function normalizeOrder(items) {
   const groups = new Map();
   for (const it of items) {
-    const k = it.date + '|' + it.slot;
+    const k = groupKey(it);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(it);
   }
   for (const list of groups.values()) {
-    list.sort((a, b) => (a.order || 0) - (b.order || 0));
+    list.sort(byOrder);
     list.forEach((it, i) => { it.order = i; });
   }
 }
@@ -117,7 +110,7 @@ app.get('/api/items', (req, res) => {
   const { from, to } = req.query;
   if (!isDate(from) || !isDate(to)) return res.status(400).json({ error: 'from/to 需为 YYYY-MM-DD' });
   if (from > to) return res.status(400).json({ error: 'from 不能晚于 to' });
-  const items = load().items.filter((it) => it.date >= from && it.date <= to).sort(bySortOrder);
+  const items = load().items.filter((it) => it.date >= from && it.date <= to).sort(compareArrangements);
   res.json({ items });
 });
 
@@ -129,7 +122,8 @@ app.post('/api/items', (req, res) => {
   if (!title) return res.status(400).json({ error: '标题不能为空' });
 
   const db = load();
-  const siblings = db.items.filter((it) => it.date === b.date && it.slot === b.slot);
+  const key = groupKey(b);
+  const siblings = db.items.filter((it) => groupKey(it) === key);
   const item = {
     id: crypto.randomUUID(),
     date: b.date,
@@ -189,8 +183,8 @@ app.post('/api/items/:id/move', (req, res) => {
   if (!item) return res.status(404).json({ error: '不存在' });
 
   const siblings = db.items
-    .filter((it) => it.date === item.date && it.slot === item.slot)
-    .sort((a, b) => a.order - b.order);
+    .filter((it) => groupKey(it) === groupKey(item))
+    .sort(byOrder);
   const i = siblings.indexOf(item);
   const j = dir === 'up' ? i - 1 : i + 1;
   if (j < 0 || j >= siblings.length) return res.json({ item, moved: false });
@@ -210,6 +204,9 @@ app.get('/api/export', (req, res) => {
   res.set('Content-Disposition', 'attachment; filename="workbench-data.json"');
   res.json(load());
 });
+
+// 领域模块：浏览器要的那一份（与服务端 require 的是同一个文件）
+app.get('/domain.js', (req, res) => res.sendFile(path.join(__dirname, 'lib', 'domain.js')));
 
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html', extensions: ['html'] }));
 

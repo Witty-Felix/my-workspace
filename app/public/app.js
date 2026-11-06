@@ -3,8 +3,8 @@
 /* 周工作台：数据走 /api/items，界面是纸 + 墨 + 硬投影。
    渲染分两套容器 —— 桌面是整周那张纸（七列），手机是当天那张纸。 */
 
-const SLOTS = ['am', 'pm', 'eve'];
-const SLOT_LABEL = { am: '上午', pm: '下午', eve: '晚上' };
+const D = window.WBDomain;   // 领域常量与排序规则，与服务端共用同一份（domain.js）
+if (!D) throw new Error('domain.js 没加载到，时段常量缺失');
 const DOW = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 const $ = (id) => document.getElementById(id);
@@ -100,17 +100,27 @@ function toast(msg) {
   }, 2400);
 }
 
-const bySort = (a, b) => {
-  if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-  const sa = SLOTS.indexOf(a.slot), sb = SLOTS.indexOf(b.slot);
-  if (sa !== sb) return sa - sb;
-  return (a.order || 0) - (b.order || 0);
-};
-
+// 同一时段的安排排在一起，组内按 order 先后
 function siblingsFn(list) {
   return (item) => list
-    .filter((x) => x.date === item.date && x.slot === item.slot)
-    .sort((a, b) => (a.order || 0) - (b.order || 0));
+    .filter((x) => D.groupKey(x) === D.groupKey(item))
+    .sort(D.byOrder);
+}
+
+/* 时段选择：三个选项从 domain.js 生成，标签不再在 HTML 里写死 */
+function renderSlotPicker() {
+  const seg = $('seg');
+  for (const id of D.SLOTS) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'slot';
+    input.value = id;
+    const span = document.createElement('span');
+    span.textContent = D.SLOT_LABELS[id];
+    label.append(input, span);
+    seg.appendChild(label);
+  }
 }
 
 /* ---------------- 渲染 ---------------- */
@@ -120,7 +130,7 @@ function makeCard(item, siblingsOf, idxForTilt = 0) {
   card.className = 'card ' + item.slot;
   card.tabIndex = 0;
   card.setAttribute('role', 'button');
-  card.setAttribute('aria-label', `${SLOT_LABEL[item.slot]} ${item.title}`);
+  card.setAttribute('aria-label', `${D.SLOT_LABELS[item.slot]} ${item.title}`);
   card.style.setProperty('--tilt', (idxForTilt % 2 ? .35 : -.3) + 'deg');
 
   const sibs = siblingsOf(item);
@@ -155,7 +165,7 @@ function makeCard(item, siblingsOf, idxForTilt = 0) {
   meta.className = 'meta';
   const dot = document.createElement('i');
   dot.className = 'sdot';
-  meta.append(dot, document.createTextNode(SLOT_LABEL[item.slot]));
+  meta.append(dot, document.createTextNode(D.SLOT_LABELS[item.slot]));
   card.appendChild(meta);
 
   const title = document.createElement('p');
@@ -198,7 +208,7 @@ function renderWeek() {
     day.className = 'day' + (key === TODAY ? ' today' : '');
     day.dataset.date = key;
 
-    const list = items.filter((it) => it.date === key).sort(bySort);
+    const list = items.filter((it) => it.date === key).sort(D.compareArrangements);
 
     const head = document.createElement('div');
     head.className = 'day-head';
@@ -265,7 +275,7 @@ function renderPhone() {
 
   const list = $('pList');
   list.textContent = '';
-  const dayItems = items.filter((it) => it.date === phoneDate).sort(bySort);
+  const dayItems = items.filter((it) => it.date === phoneDate).sort(D.compareArrangements);
 
   if (!dayItems.length) {
     const empty = document.createElement('p');
@@ -280,7 +290,7 @@ function renderPhone() {
         const h = document.createElement('div');
         h.className = 'slot-head';
         h.dataset.slot = it.slot;
-        h.textContent = SLOT_LABEL[it.slot];
+        h.textContent = D.SLOT_LABELS[it.slot];
         list.appendChild(h);
         lastSlot = it.slot;
       }
@@ -331,10 +341,7 @@ function render() {
 /* ---------------- 编辑 ---------------- */
 
 function defaultSlot() {
-  const h = new Date().getHours();
-  if (h < 12) return 'am';
-  if (h < 18) return 'pm';
-  return 'eve';
+  return D.slotForHour(new Date().getHours());
 }
 
 function openEditor(date, item) {
@@ -462,4 +469,5 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight') shiftWeek(1);
 });
 
+renderSlotPicker();
 refresh();
