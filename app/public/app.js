@@ -1,5 +1,8 @@
 'use strict';
 
+/* 周工作台：数据走 /api/items，界面是纸 + 墨 + 硬投影。
+   渲染分两套容器 —— 桌面是整周那张纸（七列），手机是当天那张纸。 */
+
 const SLOTS = ['am', 'pm', 'eve'];
 const SLOT_LABEL = { am: '上午', pm: '下午', eve: '晚上' };
 const DOW = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -7,10 +10,10 @@ const DOW = ['周一', '周二', '周三', '周四', '周五', '周六', '周日
 const $ = (id) => document.getElementById(id);
 const p2 = (n) => String(n).padStart(2, '0');
 
-function ymd(d) { return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; }
-function md(d) { return `${p2(d.getMonth() + 1)}.${p2(d.getDate())}`; }
-function parseYmd(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
-function addDays(d, n) { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() + n); return x; }
+const ymd = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+const md = (d) => `${p2(d.getMonth() + 1)}.${p2(d.getDate())}`;
+const parseYmd = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const addDays = (d, n) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() + n); return x; };
 function startOfWeek(d) {
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
@@ -61,7 +64,29 @@ async function refresh() {
   }
 }
 
-/* ---------------- 渲染 ---------------- */
+/* ---------------- 主题 ---------------- */
+
+const media = window.matchMedia('(prefers-color-scheme: dark)');
+
+function applyTheme(dark) {
+  document.documentElement.dataset.theme = dark ? 'dark' : 'day';
+  $('themeSwitch').checked = dark;
+  $('metaTheme').setAttribute('content', dark ? '#12152A' : '#E4E2DB');
+}
+
+(function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem('wb-theme'); } catch (_) {}
+  applyTheme(saved ? saved === 'dark' : media.matches);
+})();
+
+$('themeSwitch').addEventListener('change', (e) => {
+  const dark = e.target.checked;
+  applyTheme(dark);
+  try { localStorage.setItem('wb-theme', dark ? 'dark' : 'day'); } catch (_) {}
+});
+
+/* ---------------- 通用 ---------------- */
 
 function toast(msg) {
   const t = document.createElement('div');
@@ -72,52 +97,65 @@ function toast(msg) {
   setTimeout(() => {
     t.classList.remove('in');
     setTimeout(() => t.remove(), 220);
-  }, 2600);
+  }, 2400);
 }
 
-function bySort(a, b) {
+const bySort = (a, b) => {
   if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-  const sa = SLOTS.indexOf(a.slot);
-  const sb = SLOTS.indexOf(b.slot);
+  const sa = SLOTS.indexOf(a.slot), sb = SLOTS.indexOf(b.slot);
   if (sa !== sb) return sa - sb;
-  return a.order - b.order;
+  return (a.order || 0) - (b.order || 0);
+};
+
+function siblingsFn(list) {
+  return (item) => list
+    .filter((x) => x.date === item.date && x.slot === item.slot)
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
 }
 
-function makeCard(item, siblingsOf) {
+/* ---------------- 渲染 ---------------- */
+
+function makeCard(item, siblingsOf, idxForTilt = 0) {
   const card = document.createElement('article');
-  card.className = 'card';
+  card.className = 'card ' + item.slot;
   card.tabIndex = 0;
   card.setAttribute('role', 'button');
   card.setAttribute('aria-label', `${SLOT_LABEL[item.slot]} ${item.title}`);
+  card.style.setProperty('--tilt', (idxForTilt % 2 ? .35 : -.3) + 'deg');
+
+  const sibs = siblingsOf(item);
+  const idx = sibs.findIndex((x) => x.id === item.id);
+
+  // 一个时段里只有一条时没有可挪的，排序钮不出现
+  if (sibs.length > 1) {
+    const acts = document.createElement('div');
+    acts.className = 'acts';
+
+    const up = document.createElement('button');
+    up.type = 'button';
+    up.textContent = '↑';
+    up.title = '上移';
+    up.disabled = idx <= 0;
+    up.addEventListener('click', (e) => { e.stopPropagation(); move(item, 'up'); });
+
+    const down = document.createElement('button');
+    down.type = 'button';
+    down.textContent = '↓';
+    down.title = '下移';
+    down.disabled = idx < 0 || idx >= sibs.length - 1;
+    down.addEventListener('click', (e) => { e.stopPropagation(); move(item, 'down'); });
+
+    acts.append(up, down);
+    card.appendChild(acts);
+  } else {
+    card.classList.add('solo');
+  }
 
   const meta = document.createElement('div');
   meta.className = 'meta';
   const dot = document.createElement('i');
-  dot.className = `sdot ${item.slot}`;
-  meta.appendChild(dot);
-  meta.appendChild(document.createTextNode(SLOT_LABEL[item.slot]));
-
-  const acts = document.createElement('div');
-  acts.className = 'acts';
-  const sibs = siblingsOf(item);
-  const idx = sibs.findIndex((x) => x.id === item.id);
-
-  const up = document.createElement('button');
-  up.type = 'button';
-  up.textContent = '↑';
-  up.title = '上移';
-  up.disabled = idx <= 0;
-  up.addEventListener('click', (e) => { e.stopPropagation(); move(item, 'up'); });
-
-  const down = document.createElement('button');
-  down.type = 'button';
-  down.textContent = '↓';
-  down.title = '下移';
-  down.disabled = idx < 0 || idx >= sibs.length - 1;
-  down.addEventListener('click', (e) => { e.stopPropagation(); move(item, 'down'); });
-
-  acts.append(up, down);
-  card.appendChild(acts);
+  dot.className = 'sdot';
+  meta.append(dot, document.createTextNode(SLOT_LABEL[item.slot]));
   card.appendChild(meta);
 
   const title = document.createElement('p');
@@ -141,18 +179,6 @@ function makeCard(item, siblingsOf) {
   return card;
 }
 
-function siblingsFn(list) {
-  return (item) => list
-    .filter((x) => x.date === item.date && x.slot === item.slot)
-    .sort((a, b) => a.order - b.order);
-}
-
-function render() {
-  renderHeader();
-  renderWeek();
-  renderPhone();
-}
-
 function renderHeader() {
   const isThis = ymd(cursor) === ymd(startOfWeek(new Date()));
   $('wkKey').textContent = isoWeek(cursor);
@@ -172,6 +198,8 @@ function renderWeek() {
     day.className = 'day' + (key === TODAY ? ' today' : '');
     day.dataset.date = key;
 
+    const list = items.filter((it) => it.date === key).sort(bySort);
+
     const head = document.createElement('div');
     head.className = 'day-head';
     const dow = document.createElement('span');
@@ -181,23 +209,22 @@ function renderWeek() {
     dnum.className = 'dnum';
     dnum.textContent = md(date);
     head.append(dow, dnum);
+    if (list.length) {
+      const cnt = document.createElement('span');
+      cnt.className = 'cnt';
+      cnt.textContent = list.length;
+      head.appendChild(cnt);
+    }
     day.appendChild(head);
-
-    const rail = document.createElement('div');
-    rail.className = 'rail';
-    rail.appendChild(Object.assign(document.createElement('i'), { className: 'dot' }));
-    day.appendChild(rail);
 
     const stack = document.createElement('div');
     stack.className = 'stack';
-
-    const list = items.filter((it) => it.date === key).sort(bySort);
-    for (const it of list) stack.appendChild(makeCard(it, siblingsOf));
+    list.forEach((it, k) => stack.appendChild(makeCard(it, siblingsOf, k)));
 
     if (!list.length) {
-      const hint = document.createElement('div');
-      hint.className = 'empty-hint';
-      hint.textContent = '空';
+      const hint = document.createElement('p');
+      hint.className = 'empty';
+      hint.textContent = '空着';
       stack.appendChild(hint);
     }
 
@@ -216,17 +243,34 @@ function renderWeek() {
 
 function renderPhone() {
   const d = parseYmd(phoneDate);
-  const inThisWeek = phoneDate >= ymd(cursor) && phoneDate <= ymd(addDays(cursor, 6));
-  $('pDay').textContent = `${DOW[(d.getDay() + 6) % 7]} · ${md(d)}${inThisWeek ? '' : ''}`;
+
+  const head = $('pDay');
+  head.textContent = '';
+  head.append(DOW[(d.getDay() + 6) % 7]);
+  const sm = document.createElement('small');
+  sm.textContent = md(d);
+  head.appendChild(sm);
+
+  // 翻到别周时才给「回今天」，本周内不占位置
+  if (ymd(cursor) !== ymd(startOfWeek(new Date()))) {
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'back';
+    back.textContent = '回今天';
+    back.addEventListener('click', goToday);
+    head.appendChild(back);
+  }
+
+  renderStrip();
 
   const list = $('pList');
   list.textContent = '';
-
   const dayItems = items.filter((it) => it.date === phoneDate).sort(bySort);
+
   if (!dayItems.length) {
     const empty = document.createElement('p');
-    empty.className = 'empty-hint on';
-    empty.textContent = '这天还没有安排';
+    empty.className = 'empty';
+    empty.textContent = '这天还没排';
     list.appendChild(empty);
   } else {
     let lastSlot = null;
@@ -235,6 +279,7 @@ function renderPhone() {
       if (it.slot !== lastSlot) {
         const h = document.createElement('div');
         h.className = 'slot-head';
+        h.dataset.slot = it.slot;
         h.textContent = SLOT_LABEL[it.slot];
         list.appendChild(h);
         lastSlot = it.slot;
@@ -245,13 +290,45 @@ function renderPhone() {
 
   const add = document.createElement('button');
   add.type = 'button';
-  add.className = 'btn ghost wide';
+  add.className = 'btn wide';
   add.textContent = '＋ 添加安排';
   add.addEventListener('click', () => openEditor(phoneDate, null));
   list.appendChild(add);
 }
 
-/* ---------------- 交互 ---------------- */
+/* 周条：7 天一字排开，点哪天看哪天；两侧箭头翻周 */
+function renderStrip() {
+  const strip = $('pStrip');
+  strip.textContent = '';
+  for (let i = 0; i < 7; i++) {
+    const date = addDays(cursor, i);
+    const key = ymd(date);
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip'
+      + (key === phoneDate ? ' on' : '')
+      + (key === TODAY ? ' today' : '');
+    chip.setAttribute('aria-label', `${DOW[i]} ${md(date)}`);
+    if (key === phoneDate) chip.setAttribute('aria-current', 'date');
+
+    const dw = document.createElement('span');
+    dw.textContent = DOW[i].slice(1);
+    const num = document.createElement('b');
+    num.textContent = p2(date.getDate());
+    chip.append(dw, num);
+
+    chip.addEventListener('click', () => { phoneDate = key; render(); });
+    strip.appendChild(chip);
+  }
+}
+
+function render() {
+  renderHeader();
+  renderWeek();
+  renderPhone();
+}
+
+/* ---------------- 编辑 ---------------- */
 
 function defaultSlot() {
   const h = new Date().getHours();
@@ -263,7 +340,14 @@ function defaultSlot() {
 function openEditor(date, item) {
   editState = { date, item };
   const d = parseYmd(date);
-  $('edDate').textContent = `${DOW[(d.getDay() + 6) % 7]} · ${md(d)}`;
+
+  const head = $('edDate');
+  head.textContent = '';
+  head.append(DOW[(d.getDay() + 6) % 7]);
+  const sm = document.createElement('span');
+  sm.textContent = md(d);
+  head.appendChild(sm);
+
   $('fTitle').value = item ? item.title : '';
   $('fNote').value = item ? (item.note || '') : '';
   const slot = item ? item.slot : defaultSlot();
@@ -298,7 +382,7 @@ $('form').addEventListener('submit', async (e) => {
   const slot = slotEl ? slotEl.value : 'am';
 
   if (!title) {
-    $('err').textContent = '标题不能为空';
+    $('err').textContent = '写点什么再保存';
     $('err').hidden = false;
     $('fTitle').focus();
     return;
@@ -347,10 +431,19 @@ $('editor').addEventListener('click', (e) => {
   if (e.target === $('editor')) closeEditor();
 });
 
+/* ---------------- 导航 ---------------- */
+
+// 翻周时停在同一个星期几上，手机端不会跳回周一
 function shiftWeek(n) {
+  const idx = Math.round((parseYmd(phoneDate) - cursor) / 86400000);
   cursor = addDays(cursor, n * 7);
-  const start = ymd(cursor);
-  if (phoneDate < start || phoneDate > ymd(addDays(cursor, 6))) phoneDate = start;
+  phoneDate = ymd(addDays(cursor, Math.min(6, Math.max(0, idx))));
+  refresh();
+}
+
+function goToday() {
+  cursor = startOfWeek(new Date());
+  phoneDate = TODAY;
   refresh();
 }
 
@@ -359,23 +452,8 @@ $('next').addEventListener('click', () => shiftWeek(1));
 $('wkBtn').addEventListener('click', goToday);
 $('todayBtn').addEventListener('click', goToday);
 
-function goToday() {
-  cursor = startOfWeek(new Date());
-  phoneDate = TODAY;
-  refresh();
-}
-
-$('pPrev').addEventListener('click', () => { phoneDate = ymd(addDays(parseYmd(phoneDate), -1)); syncCursorToPhone(); render(); });
-$('pNext').addEventListener('click', () => { phoneDate = ymd(addDays(parseYmd(phoneDate), 1)); syncCursorToPhone(); render(); });
-
-function syncCursorToPhone() {
-  const start = ymd(cursor);
-  const end = ymd(addDays(cursor, 6));
-  if (phoneDate < start || phoneDate > end) {
-    cursor = startOfWeek(parseYmd(phoneDate));
-    refresh();
-  }
-}
+$('pPrevW').addEventListener('click', () => shiftWeek(-1));
+$('pNextW').addEventListener('click', () => shiftWeek(1));
 
 document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea')) return;

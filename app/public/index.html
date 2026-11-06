@@ -1,16 +1,45 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="day">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#f5f7fb">
+<meta name="theme-color" content="#E4E2DB" id="metaTheme">
 <title>周工作台</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
+<!-- 手绘抖动的两颗滤镜：大件 0.035/0.042 · seed 42 · scale 4.5；小件 0.06 · seed 7 · scale 2.5
+     两颗紧凑档变体：同 seed、幅度乘 0.45，只用于页头那枚 16px 的开关 -->
+<svg style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+  <defs>
+    <filter id="sketchy" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="turbulence" baseFrequency="0.035 0.042" numOctaves="4" seed="42" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="4.5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="sketchy-sm" x="-18%" y="-18%" width="136%" height="136%">
+      <feTurbulence type="turbulence" baseFrequency="0.06" numOctaves="3" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="2.5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="sketchy-c" x="-14%" y="-14%" width="128%" height="128%">
+      <feTurbulence type="turbulence" baseFrequency="0.05 0.06" numOctaves="3" seed="42" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="2.2" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="sketchy-k" x="-18%" y="-18%" width="136%" height="136%">
+      <feTurbulence type="turbulence" baseFrequency="0.09" numOctaves="3" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="1.2" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+</svg>
+
 <header class="bar">
-  <div class="brand"><i class="mark"></i><span>周工作台</span></div>
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2.6l1.9 6.2 6.2 1.9-6.2 1.9L12 18.8l-1.9-6.2L3.9 10.7l6.2-1.9z"/>
+    </svg>
+    <span>周工作台</span>
+  </div>
+
   <nav class="nav">
     <button class="ic" id="prev" aria-label="上一周">‹</button>
     <button class="wk" id="wkBtn" title="回到本周">
@@ -18,20 +47,50 @@
       <span class="wk-range" id="wkRange">—</span>
     </button>
     <button class="ic" id="next" aria-label="下一周">›</button>
-    <button class="pill" id="todayBtn">本周</button>
+    <button class="tag" id="todayBtn">本周</button>
   </nav>
+
+  <label class="hs hs--sm" title="白天 / 夜间">
+    <input class="hs__input" id="themeSwitch" type="checkbox" role="switch" aria-label="夜间模式">
+    <div class="hs__container">
+      <div class="hs__clouds"></div>
+      <div class="hs__stars">
+        <svg viewBox="0 0 144 55" fill="currentColor" width="100%">
+          <path d="M14 0l2 9.5 9.5 2-9.5 2-2 9.5-2-9.5L2.5 11.5 12 9.5z"/>
+          <path d="M58 12l1.6 7.6 7.6 1.6-7.6 1.6L58 30.4l-1.6-7.6L48.8 21.2l7.6-1.6z"/>
+          <path d="M104 4l1.2 5.7 5.7 1.2-5.7 1.2-1.2 5.7-1.2-5.7-5.7-1.2 5.7-1.2z"/>
+          <path d="M130 28l1 4.8 4.8 1-4.8 1-1 4.8-1-4.8-4.8-1 4.8-1z"/>
+        </svg>
+      </div>
+      <div class="hs__glow">
+        <div class="hs__sun">
+          <div class="hs__moon">
+            <div class="hs__spot"></div>
+            <div class="hs__spot"></div>
+            <div class="hs__spot"></div>
+          </div>
+        </div>
+      </div>
+      <div class="hs__cluster"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="hs__aurora"></div>
+      <div class="hs__comets"><i></i><i></i></div>
+    </div>
+  </label>
 </header>
 
 <main class="stage">
-  <section class="week" id="week" aria-label="一周时间线"></section>
+  <section class="sheet" id="week" aria-label="一周时间线"></section>
 
   <section class="phone" id="phone" aria-label="按天查看">
-    <div class="phone-nav">
-      <button class="ic" id="pPrev" aria-label="前一天">‹</button>
-      <div class="phone-day" id="pDay">—</div>
-      <button class="ic" id="pNext" aria-label="后一天">›</button>
+    <div class="phone-week">
+      <button class="ic" id="pPrevW" aria-label="上一周">‹</button>
+      <div class="strip" id="pStrip" role="group" aria-label="选择日期"></div>
+      <button class="ic" id="pNextW" aria-label="下一周">›</button>
     </div>
-    <div class="phone-list" id="pList"></div>
+    <div class="phone-paper">
+      <div class="phone-day" id="pDay">—</div>
+      <div class="phone-list" id="pList"></div>
+    </div>
   </section>
 </main>
 
@@ -54,7 +113,6 @@
     </div>
   </form>
 </dialog>
-
 <script src="app.js"></script>
 </body>
 </html>
