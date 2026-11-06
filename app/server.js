@@ -1,16 +1,14 @@
 'use strict';
 
 const express = require('express');
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 // 领域常量与排序规则：与浏览器共用同一份（app/lib/domain.js）
-const { SLOTS, compareArrangements, groupKey, byOrder } = require('./lib/domain');
+const { SLOTS, compareArrangements, groupKey, byOrder, normalizeOrder } = require('./lib/domain');
+// 存储层：安排数据怎么落盘、怎么读回（app/lib/store.js）
+const store = require('./lib/store');
 
 const PORT = Number(process.env.PORT || 8090);
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const DATA_FILE = path.join(DATA_DIR, 'data.json');
-const BAK_FILE = path.join(DATA_DIR, 'data.json.bak');
 const AUTH_USER = process.env.AUTH_USER || '';
 const AUTH_PASS = process.env.AUTH_PASS || '';
 // AUTH=off 显式关闭登录：默认仍是 basic，避免误删凭据就把站点裸奔出去
@@ -19,45 +17,6 @@ const AUTH_OFF = String(process.env.AUTH || 'basic').toLowerCase() === 'off';
 if (!AUTH_OFF && (!AUTH_USER || !AUTH_PASS)) {
   console.error('[fatal] AUTH_USER / AUTH_PASS 未设置，拒绝启动（fail-closed）。确需免登录请设 AUTH=off');
   process.exit(1);
-}
-
-// ---------- 存储：单文件 JSON，原子替换 + 一步备份 ----------
-
-let cache = null;
-
-function load() {
-  if (cache) return cache;
-  try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    cache = { version: 1, items: Array.isArray(parsed.items) ? parsed.items : [] };
-  } catch (err) {
-    if (err.code !== 'ENOENT') console.error('[store] 读取失败，按空库启动：', err.message);
-    cache = { version: 1, items: [] };
-  }
-  return cache;
-}
-
-function save(next) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = DATA_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8');
-  if (fs.existsSync(DATA_FILE)) fs.copyFileSync(DATA_FILE, BAK_FILE);
-  fs.renameSync(tmp, DATA_FILE);
-  cache = next;
-}
-
-function normalizeOrder(items) {
-  const groups = new Map();
-  for (const it of items) {
-    const k = groupKey(it);
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(it);
-  }
-  for (const list of groups.values()) {
-    list.sort(byOrder);
-    list.forEach((it, i) => { it.order = i; });
-  }
 }
 
 // ---------- 校验 ----------
@@ -110,7 +69,7 @@ app.get('/api/items', (req, res) => {
   const { from, to } = req.query;
   if (!isDate(from) || !isDate(to)) return res.status(400).json({ error: 'from/to 需为 YYYY-MM-DD' });
   if (from > to) return res.status(400).json({ error: 'from 不能晚于 to' });
-  const items = load().items.filter((it) => it.date >= from && it.date <= to).sort(compareArrangements);
+  const items = store.load().items.filter((it) => it.date >= from && it.date <= to).sort(compareArrangements);
   res.json({ items });
 });
 
@@ -121,7 +80,7 @@ app.post('/api/items', (req, res) => {
   if (!SLOTS.includes(b.slot)) return res.status(400).json({ error: 'slot 非法' });
   if (!title) return res.status(400).json({ error: '标题不能为空' });
 
-  const db = load();
+  const db = store.load();
   const key = groupKey(b);
   const siblings = db.items.filter((it) => groupKey(it) === key);
   const item = {
@@ -134,14 +93,14 @@ app.post('/api/items', (req, res) => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  const next = { version: 1, items: db.items.concat(item) };
+  const next = store.envelope(db.items.concat(item));
   normalizeOrder(next.items);
-  save(next);
+  store.save(next);
   res.status(201).json({ item });
 });
 
 app.patch('/api/items/:id', (req, res) => {
-  const db = load();
+  const db = store.load();
   const item = db.items.find((it) => it.id === req.params.id);
   if (!item) return res.status(404).json({ error: '不存在' });
 
@@ -156,21 +115,21 @@ app.patch('/api/items/:id', (req, res) => {
   if (b.date !== undefined) item.date = b.date;
   item.updatedAt = new Date().toISOString();
 
-  const next = { version: 1, items: db.items };
+  const next = store.envelope(db.items);
   normalizeOrder(next.items);
-  save(next);
+  store.save(next);
   res.json({ item });
 });
 
 app.delete('/api/items/:id', (req, res) => {
-  const db = load();
+  const db = store.load();
   const idx = db.items.findIndex((it) => it.id === req.params.id);
   if (idx < 0) return res.status(404).json({ error: '不存在' });
   const items = db.items.slice();
   items.splice(idx, 1);
-  const next = { version: 1, items };
+  const next = store.envelope(items);
   normalizeOrder(next.items);
-  save(next);
+  store.save(next);
   res.json({ ok: true });
 });
 
@@ -178,7 +137,7 @@ app.post('/api/items/:id/move', (req, res) => {
   const dir = (req.body || {}).dir;
   if (dir !== 'up' && dir !== 'down') return res.status(400).json({ error: 'dir 需为 up 或 down' });
 
-  const db = load();
+  const db = store.load();
   const item = db.items.find((it) => it.id === req.params.id);
   if (!item) return res.status(404).json({ error: '不存在' });
 
@@ -194,15 +153,15 @@ app.post('/api/items/:id/move', (req, res) => {
   item.order = other.order;
   other.order = tmp;
 
-  const next = { version: 1, items: db.items };
+  const next = store.envelope(db.items);
   normalizeOrder(next.items);
-  save(next);
+  store.save(next);
   res.json({ item, moved: true });
 });
 
 app.get('/api/export', (req, res) => {
   res.set('Content-Disposition', 'attachment; filename="workbench-data.json"');
-  res.json(load());
+  res.json(store.load());
 });
 
 // 领域模块：浏览器要的那一份（与服务端 require 的是同一个文件）
@@ -219,5 +178,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[workbench] listening on :${PORT}, data=${DATA_FILE}, auth=${AUTH_OFF ? 'OFF' : 'basic'}`);
+  console.log(`[workbench] listening on :${PORT}, data=${store.DATA_FILE}, auth=${AUTH_OFF ? 'OFF' : 'basic'}`);
 });

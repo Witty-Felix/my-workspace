@@ -30,5 +30,22 @@
   // 按钟点选默认时段：12 点前上午，18 点前下午，其余晚上
   const slotForHour = (h) => (h < 12 ? SLOTS[0] : h < 18 ? SLOTS[1] : SLOTS[2]);
 
-  return { SLOTS, SLOT_LABELS, groupKey, byOrder, compareArrangements, slotForHour };
+  // 同组内重新编号：order 连续排到 0..n-1
+  const normalizeOrder = (items) => {
+    const groups = new Map();
+    for (const it of items) {
+      const k = groupKey(it);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(it);
+    }
+    for (const list of groups.values()) {
+      list.sort(byOrder);
+      list.forEach((it, i) => { it.order = i; });
+    }
+  };
+
+  return {
+    SLOTS, SLOT_LABELS, groupKey, byOrder,
+    compareArrangements, slotForHour, normalizeOrder,
+  };
 });
