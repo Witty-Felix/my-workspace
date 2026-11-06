@@ -47,6 +47,21 @@ ssh root@139.224.192.94 "docker exec gateway nginx -t && docker exec gateway ngi
 
 buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/docker-compose.yml`，改前备份为 `docker-compose.yml.bak-*`）。**它不是本仓库的文件**，日后 buddy 若拉上游新版本，需要重新合并这一行。
 
+## 子域名接入（Cloudflare）
+
+网关已按 `server_name my-workspace.3246146917.xyz` 写好，`80` 与 `443` 都在听，**只剩 DNS 委派和 Cloudflare 的 SSL 模式两件事**。
+
+| 步骤 | 在哪做 | 要点 |
+|---|---|---|
+| 1. 确认域名已注册 | 任意注册商 | RDAP 查 `rdap.centralnic.com/xyz/domain/3246146917.xyz`，404 = 注册库里没有 |
+| 2. 改 NS 指向 Cloudflare | 域名注册商控制台 | Cloudflare Overview 顶部「Pending Nameserver Update」给出的两个 `*.ns.cloudflare.com` |
+| 3. SSL/TLS 模式设为 **Full** | Cloudflare → SSL/TLS | 源站是自签证书，`Full` 不校验可用；`Full (strict)` 会 526 |
+| 4. 橙云保持 Proxied | Cloudflare → DNS | 回源走 443，源站已就绪 |
+
+源站证书：`/opt/gateway/certs/{fullchain,privkey}.pem`，自签、CN 与 SAN 都是该子域名、10 年有效。要换成 Cloudflare Origin CA 证书（15 年、可开 Full strict）时，替换这两个文件后 `docker exec gateway nginx -s reload`。
+
+**备案风险**：阿里云上海节点对未备案域名的 80 访问可能拦截。若解析正常但仍打不开，先在源站 `curl -H "Host: my-workspace.3246146917.xyz" http://127.0.0.1/` 判断是备案拦截还是配置问题。
+
 ## 日常更新
 
 ```bash
