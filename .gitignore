@@ -4,3 +4,4 @@ app/.env
 *.log
 app/.smoke-data/
 app/.smoke.log
+app/.smoke/

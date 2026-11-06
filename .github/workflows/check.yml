@@ -1,0 +1,27 @@
+name: check
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # ADR 检查要翻历史，浅克隆会看不到
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 安装依赖
+        working-directory: app
+        run: npm ci
+      - name: 静态检查（语法 / 镜像 COPY 覆盖 / 行尾）
+        run: bash app/scripts/check.sh
+      - name: ADR 漂移检查
+        run: bash app/scripts/check-adr.sh --warn
+      - name: 端到端回归（接口契约 / 渲染 / 首屏重试）
+        working-directory: app
+        run: bash scripts/smoke.sh HEAD~1

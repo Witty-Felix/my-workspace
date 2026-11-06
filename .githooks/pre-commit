@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# 提交前自检。启用方式（一次性）：
+#   git config core.hooksPath .githooks
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+echo "[pre-commit] 静态检查"
+bash app/scripts/check.sh || exit 1
+
+echo "[pre-commit] ADR 漂移检查"
+bash app/scripts/check-adr.sh || exit 1
+
+echo "[pre-commit] 通过"

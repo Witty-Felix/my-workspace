@@ -17,18 +17,16 @@
 
 ## 首次部署（已完成，留档）
 
-```bash
-# 本机
-tar czf - --exclude=node_modules --exclude=.smoke-data . \
-  | ssh root@139.224.192.94 "mkdir -p /opt/workbench && tar xzf - -C /opt/workbench"
+首次部署的命令**不再保留原文**——它是从仓库根打包的，照抄会把 `app/`、`docs/`、`deploy/` 一并传到 `/opt/workbench` 下，正是 2026-11-06 线上那堆残留目录的来源。
 
-# 服务器
-cd /opt/workbench
-printf 'AUTH_USER=joye\nAUTH_PASS=<密码>\n' > .env && chmod 600 .env
-docker compose up -d --build
+现在的做法一律走脚本（打包目录、排除项、密钥、回退档都写死在脚本里）：
+
+```bash
+cd app && npm run deploy -- --dry-run    # 先看它要干什么
+cd app && npm run deploy                 # 真部署
 ```
 
-> 上面这条首装命令是在 `app/` 目录里执行的（`cd app` 之后再 tar），所以文件才落在 `/opt/workbench` 根上。
+需要重建一台新机器时，先手工做两件事脚本不会替你决定的事：建目录 `/opt/workbench`、写 `.env`（`AUTH=off` 或 `AUTH=basic` + 账号密码），再跑 `npm run deploy`。
 
 ## 80 端口网关
 
@@ -85,29 +83,31 @@ buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/
 **线上是扁平布局**：`app/` 里的内容直接铺在 `/opt/workbench` 根目录（`server.js`、`public/`、`Dockerfile` 都在根上），构建上下文就是 `/opt/workbench`。所以**要传的是 `app/` 的内容，不是仓库根**。
 
 ```bash
-# 本机：从 app/ 里打包（不是仓库根！）
-cd app
-tar czf - --exclude=./node_modules --exclude=./data --exclude=./.env . \
-  | ssh -i ~/.ssh/wb_deploy_ed25519 root@139.224.192.94 "tar xzf - -C /opt/workbench"
-
-# 服务器：重建镜像并重启
-ssh -i ~/.ssh/wb_deploy_ed25519 root@139.224.192.94 \
-  "cd /opt/workbench && docker compose up -d --build"
+cd app && npm run deploy
 ```
+
+（打包目录、排除项、密钥、回退档、自查都在 `app/scripts/deploy.sh` 里，不要手写 tar/ssh。脚本依次做：静态自检 → 打回退档（`workbench:prev` + 数据备份）→ 从 `app/` 打包上传 → `docker compose up -d --build` → 比对容器内文件哈希与数据指纹 → 探公网。**打包目录与排除项错一个就是线上事故。**）
 
 只改前端（`public/`）也要重建镜像，因为静态文件打在镜像里。
 
 ⚠️ **传错位置的症状**：如果把仓库根整棵树传上去，文件会落到 `/opt/workbench/app/public/`，而构建读的是根目录的 `public/` —— 此时 `docker compose up -d --build` 会输出 `COPY public ./public CACHED`、镜像 ID 不变、容器不重启，看起来"部署成功"但页面没变。**判据：镜像 sha256 有没有变、容器是不是 `Recreated`。**
 
-部署后自查（三条都要对）：
+部署后自查由脚本自动做（容器内文件哈希 ↔ 本机、数据指纹、公网 HTTP），结果会直接打印。
 
-```bash
-ssh -i ~/.ssh/wb_deploy_ed25519 root@139.224.192.94 \
-  "docker exec workbench md5sum /app/public/index.html; \
-   docker images workbench --format '{{.Tag}} {{.ID}} {{.CreatedSince}}'"
-md5sum app/public/index.html        # 本机对比，两个哈希必须一致
-curl -s https://my-workspace.324614917.xyz/ | head -c 200
-```
+## 护栏（提交与发布前的自检）
+
+仓库自带的脚本，别手写重复的验证：
+
+| 命令 | 管什么 |
+|---|---|
+| `cd app && npm run check` | 语法、镜像 COPY 覆盖（新增目录忘了加 `COPY` 会在这里报）、行尾（工作区 CRLF 会被打进镜像） |
+| `cd app && npm run smoke` | 端到端回归：改动前后两个版本的接口契约逐字比对、浏览器 DOM 归一化比对、首屏 500 的自动重试 |
+| `cd app && npm run adr` | ADR 漂移：改了鉴权默认 / 磁盘格式 / 端口 / 镜像契约，却没新增 ADR 就报错 |
+| `cd app && npm run deploy` | 部署（见上） |
+
+提交前自动跑前两项：`git config core.hooksPath .githooks`（一次性启用）。CI 在每次 push / PR 上跑同样三项。
+
+> 写脚本时踩过的坑，都固化在 `app/scripts/` 里了：两个服务必须在**同一次脚本调用**里启停（后台进程不跨命令存活）；基准版本要放在 `app/` 目录内（否则 `require('express')` 找不到 `node_modules`）；Node 不认 Git-Bash 的 `/tmp`（实为 `D:\tmp`），暂存目录一律用 `app/.smoke/`。
 
 ## 排障
 

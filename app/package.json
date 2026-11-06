@@ -5,7 +5,11 @@
   "description": "个人培训工作台 · 周轴",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "bash scripts/check.sh",
+    "smoke": "bash scripts/smoke.sh",
+    "adr": "bash scripts/check-adr.sh",
+    "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "express": "^4.19.2"

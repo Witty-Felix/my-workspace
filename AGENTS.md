@@ -15,3 +15,7 @@ Issues 与 spec 存放在 GitHub Issues（`Witty-Felix/my-workspace`），通过
 ### Domain docs
 
 single-context 布局：根目录 `GLOSSARY.md` + `docs/adr/`。See `docs/agents/domain.md`.
+
+### Checks
+
+改动前后跑 `cd app && npm run check && npm run smoke`；发布走 `cd app && npm run deploy`（不要手写 tar/ssh）。见 `docs/deploy.md`。
