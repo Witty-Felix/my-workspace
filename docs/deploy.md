@@ -13,7 +13,7 @@
 | 访问 | **`https://my-workspace.324614917.xyz/`**（Cloudflare → 源站 80/443 → 网关 → 工作台） |
 | 备用入口 | `http://139.224.192.94/workbench/`、`http://139.224.192.94:8090/` |
 | 网关 | `gateway` 容器（`nginx:alpine`），配置在 `/opt/gateway`，同仓库 `deploy/gateway/` |
-| 登录 | HTTP Basic，凭据在 `/opt/workbench/.env`（`/api/health` 例外，匿名可访问，供容器探针用） |
+| 登录 | **已关闭**（`.env` 里 `AUTH=off`）。恢复登录：把 `.env` 改成 `AUTH=basic` + 填 `AUTH_USER`/`AUTH_PASS`，再 `docker compose up -d` |
 
 ## 首次部署（已完成，留档）
 
@@ -67,6 +67,16 @@ buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/
 
 **排查口诀**：先问权威服务器，别看面板。
 `nslookup -type=ns <域名> ns0.centralnic.net` —— 注册局自己有话说，面板只显示“提交成功”。
+
+## 鉴权
+
+当前免登录，`/opt/workbench/.env` 只有一行 `AUTH=off`。
+
+- **恢复登录**：`printf 'AUTH=basic\nAUTH_USER=joye\nAUTH_PASS=新密码\n' > .env` 后 `docker compose up -d`
+- **兜底逻辑**：`AUTH` 不是 `off` 时，`AUTH_USER`/`AUTH_PASS` 任一为空容器直接退出——这是有意的，防止误删凭据把站点裸奔出去
+- **`/api/health` 始终匿名**，供容器健康检查用，只返回 uptime
+
+免登录意味着任何拿到 URL 的人都能读写你的安排。数据本身只有一份 `data.json`，被改坏了用 `.bak` 回滚。
 
 ## 日常更新
 

@@ -11,10 +11,12 @@ const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const BAK_FILE = path.join(DATA_DIR, 'data.json.bak');
 const AUTH_USER = process.env.AUTH_USER || '';
 const AUTH_PASS = process.env.AUTH_PASS || '';
+// AUTH=off 显式关闭登录：默认仍是 basic，避免误删凭据就把站点裸奔出去
+const AUTH_OFF = String(process.env.AUTH || 'basic').toLowerCase() === 'off';
 const SLOTS = ['am', 'pm', 'eve'];
 
-if (!AUTH_USER || !AUTH_PASS) {
-  console.error('[fatal] AUTH_USER / AUTH_PASS 未设置，拒绝启动（fail-closed）');
+if (!AUTH_OFF && (!AUTH_USER || !AUTH_PASS)) {
+  console.error('[fatal] AUTH_USER / AUTH_PASS 未设置，拒绝启动（fail-closed）。确需免登录请设 AUTH=off');
   process.exit(1);
 }
 
@@ -98,6 +100,7 @@ function safeEqual(a, b) {
 }
 
 app.use((req, res, next) => {
+  if (AUTH_OFF) return next();
   const header = req.headers.authorization || '';
   if (header.startsWith('Basic ')) {
     const raw = Buffer.from(header.slice(6), 'base64').toString('utf8');
@@ -219,5 +222,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[workbench] listening on :${PORT}, data=${DATA_FILE}`);
+  console.log(`[workbench] listening on :${PORT}, data=${DATA_FILE}, auth=${AUTH_OFF ? 'OFF' : 'basic'}`);
 });

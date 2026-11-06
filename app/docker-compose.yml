@@ -8,6 +8,7 @@ services:
       - "8090:8090"
     environment:
       TZ: Asia/Shanghai
+      AUTH: ${AUTH:-basic}
       AUTH_USER: ${AUTH_USER}
       AUTH_PASS: ${AUTH_PASS}
     volumes:
