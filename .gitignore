@@ -2,6 +2,5 @@ node_modules/
 app/data/
 app/.env
 *.log
-app/data/
 app/.smoke-data/
 app/.smoke.log

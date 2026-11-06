@@ -6,11 +6,11 @@
 
 ### Issue tracker
 
-Issues 与 spec 以 markdown 文件存放在 `.scratch/<feature-slug>/` 下（本地追踪，无远程仓库）。See `docs/agents/issue-tracker.md`.
+Issues 与 spec 存放在 GitHub Issues（`Witty-Felix/my-workspace`），通过 `gh` CLI 读写。See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-五个规范 triage 角色，标签字符串与角色同名，写入 issue 文件的 `Status:` 行。See `docs/agents/triage-labels.md`.
+五个规范 triage 角色，标签字符串与角色同名，作为 GitHub label 应用。See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
