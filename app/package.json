@@ -2,7 +2,7 @@
   "name": "workbench-week-timeline",
   "version": "1.0.0",
   "private": true,
-  "description": "个人培训工作台 · 周时间线",
+  "description": "个人培训工作台 · 周轴",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
