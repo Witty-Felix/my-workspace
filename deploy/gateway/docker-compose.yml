@@ -7,7 +7,9 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 挂目录而不是单文件：替换单文件会换 inode，容器里仍是旧 inode，
+      # reload 看似成功实则加载旧配置（踩过一次）。
+      - ./conf.d:/etc/nginx/conf.d:ro
       - ./certs:/etc/nginx/certs:ro
     networks:
       - vbcd

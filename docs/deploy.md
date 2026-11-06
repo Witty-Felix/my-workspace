@@ -10,8 +10,8 @@
 | 端口 | 宿主 `8090` → 容器 `8090` |
 | 数据 | `/opt/workbench/data/data.json`（挂载进容器 `/app/data`） |
 | 备份 | 同目录 `data.json.bak`，每次写入前的上一版 |
-| 访问 | **`http://139.224.192.94/workbench/`**（80 由 gateway 容器按路径分发） |
-| 备用入口 | `http://139.224.192.94:8090/`（直连 workbench，绕过网关） |
+| 访问 | **`https://my-workspace.324614917.xyz/`**（Cloudflare → 源站 80/443 → 网关 → 工作台） |
+| 备用入口 | `http://139.224.192.94/workbench/`、`http://139.224.192.94:8090/` |
 | 网关 | `gateway` 容器（`nginx:alpine`），配置在 `/opt/gateway`，同仓库 `deploy/gateway/` |
 | 登录 | HTTP Basic，凭据在 `/opt/workbench/.env`（`/api/health` 例外，匿名可访问，供容器探针用） |
 
@@ -41,26 +41,32 @@ docker compose up -d --build
 它同时接入 `vbcd_internal` 与 `workbench_default` 两个网络，所以能按服务名找到两边。改配置后：
 
 ```bash
-scp deploy/gateway/nginx.conf root@139.224.192.94:/opt/gateway/
+scp deploy/gateway/conf.d/default.conf root@139.224.192.94:/opt/gateway/conf.d/
 ssh root@139.224.192.94 "docker exec gateway nginx -t && docker exec gateway nginx -s reload"
 ```
+
+**挂载方式踩过的坑**：`conf.d/` 必须挂**目录**，不能挂单个文件。挂单文件时，宿主机上替换文件会换 inode，容器里仍指向旧 inode —— `nginx -t` 通过、`reload` 成功，但加载的是旧配置，表现为“改了没反应”。
 
 buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/docker-compose.yml`，改前备份为 `docker-compose.yml.bak-*`）。**它不是本仓库的文件**，日后 buddy 若拉上游新版本，需要重新合并这一行。
 
 ## 子域名接入（Cloudflare）
 
-网关已按 `server_name my-workspace.3246146917.xyz` 写好，`80` 与 `443` 都在听，**只剩 DNS 委派和 Cloudflare 的 SSL 模式两件事**。
+**已接通。** 真实域名是 `324614917.xyz`（9 位数字）。早期排查用的 `3246146917.xyz`（10 位）从未在注册局存在，纯属多打一位，配置里仅保留作占位。
 
-| 步骤 | 在哪做 | 要点 |
-|---|---|---|
-| 1. 确认域名已注册 | 任意注册商 | RDAP 查 `rdap.centralnic.com/xyz/domain/3246146917.xyz`，404 = 注册库里没有 |
-| 2. 改 NS 指向 Cloudflare | 域名注册商控制台 | Cloudflare Overview 顶部「Pending Nameserver Update」给出的两个 `*.ns.cloudflare.com` |
-| 3. SSL/TLS 模式设为 **Full** | Cloudflare → SSL/TLS | 源站是自签证书，`Full` 不校验可用；`Full (strict)` 会 526 |
-| 4. 橙云保持 Proxied | Cloudflare → DNS | 回源走 443，源站已就绪 |
+| 项 | 状态 |
+|---|---|
+| 域名 | `324614917.xyz`，腾讯云注册（注册商帝思普），Cloudflare 托管，橙云 Proxied |
+| NS | `stanley` / `amalia.ns.cloudflare.com`（正确） |
+| 子域记录 | `my-workspace` A → `139.224.192.94`，橙色云 |
+| 边缘证书 | Cloudflare Universal SSL，Let's Encrypt 签发，浏览器直接信任 |
+| 回源 | Cloudflare → 源站 80/443 → `gateway` 按 `server_name` 命中工作台 |
 
-源站证书：`/opt/gateway/certs/{fullchain,privkey}.pem`，自签、CN 与 SAN 都是该子域名、10 年有效。要换成 Cloudflare Origin CA 证书（15 年、可开 Full strict）时，替换这两个文件后 `docker exec gateway nginx -s reload`。
+源站证书：`/opt/gateway/certs/{fullchain,privkey}.pem`，自签、10 年，SAN 含 `my-workspace.324614917.xyz`、`324614917.xyz`。要换成 Cloudflare Origin CA 证书并把 SSL 模式提到 `Full (strict)` 时，替换两个文件后 `docker compose up -d --force-recreate`（不是 reload，见上面的 inode 坑）。
 
-**备案风险**：阿里云上海节点对未备案域名的 80 访问可能拦截。若解析正常但仍打不开，先在源站 `curl -H "Host: my-workspace.3246146917.xyz" http://127.0.0.1/` 判断是备案拦截还是配置问题。
+**根域 `324614917.xyz` 归 buddy**，网关的默认 server 块负责；别把它也指到工作台。
+
+**排查口诀**：先问权威服务器，别看面板。
+`nslookup -type=ns <域名> ns0.centralnic.net` —— 注册局自己有话说，面板只显示“提交成功”。
 
 ## 日常更新
 
