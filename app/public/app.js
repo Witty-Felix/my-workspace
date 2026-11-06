@@ -8,10 +8,10 @@ if (!D) throw new Error('domain.js 没加载到，时段常量缺失');
 const DOW = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 const $ = (id) => document.getElementById(id);
-const p2 = (n) => String(n).padStart(2, '0');
+const pad2 = (n) => String(n).padStart(2, '0');
 
-const ymd = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
-const md = (d) => `${p2(d.getMonth() + 1)}.${p2(d.getDate())}`;
+const ymd = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const monthDay = (d) => `${pad2(d.getMonth() + 1)}.${pad2(d.getDate())}`;
 const parseYmd = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
 const addDays = (d, n) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() + n); return x; };
 function startOfWeek(d) {
@@ -24,12 +24,12 @@ function isoWeek(d) {
   t.setDate(t.getDate() + 3 - ((t.getDay() + 6) % 7));
   const week1 = new Date(t.getFullYear(), 0, 4);
   const w = 1 + Math.round(((t - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
-  return `${t.getFullYear()}-W${p2(w)}`;
+  return `${t.getFullYear()}-W${pad2(w)}`;
 }
 
 const TODAY = ymd(new Date());
 
-let cursor = startOfWeek(new Date());
+let weekStart = startOfWeek(new Date());
 let items = [];
 let phoneDate = TODAY;
 let editState = null;
@@ -43,23 +43,30 @@ async function api(path, opts) {
   if (!res.ok) {
     let msg = `请求失败（${res.status}）`;
     try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;   // 让调用方能判断该不该重试
+    throw err;
   }
   return res.json();
 }
 
 async function loadWeek() {
-  const from = ymd(cursor);
-  const to = ymd(addDays(cursor, 6));
+  const from = ymd(weekStart);
+  const to = ymd(addDays(weekStart, 6));
   const data = await api(`/api/items?from=${from}&to=${to}`);
   items = data.items || [];
 }
 
-async function refresh() {
+async function refresh(retryLeft = 1) {
   try {
     await loadWeek();
     render();
   } catch (err) {
+    // 4xx 是参数/权限问题，重试没用；网络错误与 5xx 才重试一次
+    if (retryLeft > 0 && (!err.status || err.status >= 500)) {
+      setTimeout(() => refresh(retryLeft - 1), 600);
+      return;
+    }
     toast(err.message);
   }
 }
@@ -71,7 +78,9 @@ const media = window.matchMedia('(prefers-color-scheme: dark)');
 function applyTheme(dark) {
   document.documentElement.dataset.theme = dark ? 'dark' : 'day';
   $('themeSwitch').checked = dark;
-  $('metaTheme').setAttribute('content', dark ? '#12152A' : '#E4E2DB');
+  // 颜色只有一个真相源：style.css 的 --paper，换配色不用动这里
+  const paper = getComputedStyle(document.documentElement).getPropertyValue('--paper').trim();
+  if (paper) $('metaTheme').setAttribute('content', paper);
 }
 
 (function initTheme() {
@@ -190,9 +199,9 @@ function makeCard(item, siblingsOf, idxForTilt = 0) {
 }
 
 function renderHeader() {
-  const isThis = ymd(cursor) === ymd(startOfWeek(new Date()));
-  $('wkKey').textContent = isoWeek(cursor);
-  $('wkRange').textContent = `${md(cursor)} – ${md(addDays(cursor, 6))}`;
+  const isThis = ymd(weekStart) === ymd(startOfWeek(new Date()));
+  $('wkKey').textContent = isoWeek(weekStart);
+  $('wkRange').textContent = `${monthDay(weekStart)} – ${monthDay(addDays(weekStart, 6))}`;
   $('todayBtn').classList.toggle('on', isThis);
 }
 
@@ -202,7 +211,7 @@ function renderWeek() {
   const siblingsOf = siblingsFn(items);
 
   for (let i = 0; i < 7; i++) {
-    const date = addDays(cursor, i);
+    const date = addDays(weekStart, i);
     const key = ymd(date);
     const day = document.createElement('div');
     day.className = 'day' + (key === TODAY ? ' today' : '');
@@ -217,7 +226,7 @@ function renderWeek() {
     dow.textContent = DOW[i];
     const dnum = document.createElement('span');
     dnum.className = 'dnum';
-    dnum.textContent = md(date);
+    dnum.textContent = monthDay(date);
     head.append(dow, dnum);
     if (list.length) {
       const cnt = document.createElement('span');
@@ -242,7 +251,7 @@ function renderWeek() {
     add.type = 'button';
     add.className = 'add';
     add.textContent = '＋';
-    add.title = `在 ${md(date)} 添加安排`;
+    add.title = `在 ${monthDay(date)} 添加安排`;
     add.addEventListener('click', () => openEditor(key, null));
     stack.appendChild(add);
 
@@ -258,11 +267,11 @@ function renderPhone() {
   head.textContent = '';
   head.append(DOW[(d.getDay() + 6) % 7]);
   const sm = document.createElement('small');
-  sm.textContent = md(d);
+  sm.textContent = monthDay(d);
   head.appendChild(sm);
 
   // 翻到别周时才给「回今天」，本周内不占位置
-  if (ymd(cursor) !== ymd(startOfWeek(new Date()))) {
+  if (ymd(weekStart) !== ymd(startOfWeek(new Date()))) {
     const back = document.createElement('button');
     back.type = 'button';
     back.className = 'back';
@@ -311,21 +320,21 @@ function renderStrip() {
   const strip = $('pStrip');
   strip.textContent = '';
   for (let i = 0; i < 7; i++) {
-    const date = addDays(cursor, i);
+    const date = addDays(weekStart, i);
     const key = ymd(date);
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'chip'
       + (key === phoneDate ? ' on' : '')
       + (key === TODAY ? ' today' : '');
-    chip.setAttribute('aria-label', `${DOW[i]} ${md(date)}`);
+    chip.setAttribute('aria-label', `${DOW[i]} ${monthDay(date)}`);
     if (key === phoneDate) chip.setAttribute('aria-current', 'date');
 
-    const dw = document.createElement('span');
-    dw.textContent = DOW[i].slice(1);
+    const dowShort = document.createElement('span');
+    dowShort.textContent = DOW[i].slice(1);
     const num = document.createElement('b');
-    num.textContent = p2(date.getDate());
-    chip.append(dw, num);
+    num.textContent = pad2(date.getDate());
+    chip.append(dowShort, num);
 
     chip.addEventListener('click', () => { phoneDate = key; render(); });
     strip.appendChild(chip);
@@ -352,7 +361,7 @@ function openEditor(date, item) {
   head.textContent = '';
   head.append(DOW[(d.getDay() + 6) % 7]);
   const sm = document.createElement('span');
-  sm.textContent = md(d);
+  sm.textContent = monthDay(d);
   head.appendChild(sm);
 
   $('fTitle').value = item ? item.title : '';
@@ -442,14 +451,14 @@ $('editor').addEventListener('click', (e) => {
 
 // 翻周时停在同一个星期几上，手机端不会跳回周一
 function shiftWeek(n) {
-  const idx = Math.round((parseYmd(phoneDate) - cursor) / 86400000);
-  cursor = addDays(cursor, n * 7);
-  phoneDate = ymd(addDays(cursor, Math.min(6, Math.max(0, idx))));
+  const idx = Math.round((parseYmd(phoneDate) - weekStart) / 86400000);
+  weekStart = addDays(weekStart, n * 7);
+  phoneDate = ymd(addDays(weekStart, Math.min(6, Math.max(0, idx))));
   refresh();
 }
 
 function goToday() {
-  cursor = startOfWeek(new Date());
+  weekStart = startOfWeek(new Date());
   phoneDate = TODAY;
   refresh();
 }
