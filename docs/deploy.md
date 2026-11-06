@@ -28,6 +28,8 @@ printf 'AUTH_USER=joye\nAUTH_PASS=<密码>\n' > .env && chmod 600 .env
 docker compose up -d --build
 ```
 
+> 上面这条首装命令是在 `app/` 目录里执行的（`cd app` 之后再 tar），所以文件才落在 `/opt/workbench` 根上。
+
 ## 80 端口网关
 
 `:80` 不是 buddy 的 nginx 了，是 `gateway` 容器（ADR-0003）。它按路径分发：
@@ -80,14 +82,32 @@ buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/
 
 ## 日常更新
 
+**线上是扁平布局**：`app/` 里的内容直接铺在 `/opt/workbench` 根目录（`server.js`、`public/`、`Dockerfile` 都在根上），构建上下文就是 `/opt/workbench`。所以**要传的是 `app/` 的内容，不是仓库根**。
+
 ```bash
-# 本机改完 → 传上去 → 重建
-tar czf - --exclude=node_modules --exclude=.smoke-data . \
-  | ssh root@139.224.192.94 "tar xzf - -C /opt/workbench"
-ssh root@139.224.192.94 "cd /opt/workbench && docker compose up -d --build"
+# 本机：从 app/ 里打包（不是仓库根！）
+cd app
+tar czf - --exclude=./node_modules --exclude=./data --exclude=./.env . \
+  | ssh -i ~/.ssh/wb_deploy_ed25519 root@139.224.192.94 "tar xzf - -C /opt/workbench"
+
+# 服务器：重建镜像并重启
+ssh -i ~/.ssh/wb_deploy_ed25519 root@139.224.192.94 \
+  "cd /opt/workbench && docker compose up -d --build"
 ```
 
 只改前端（`public/`）也要重建镜像，因为静态文件打在镜像里。
+
+⚠️ **传错位置的症状**：如果把仓库根整棵树传上去，文件会落到 `/opt/workbench/app/public/`，而构建读的是根目录的 `public/` —— 此时 `docker compose up -d --build` 会输出 `COPY public ./public CACHED`、镜像 ID 不变、容器不重启，看起来"部署成功"但页面没变。**判据：镜像 sha256 有没有变、容器是不是 `Recreated`。**
+
+部署后自查（三条都要对）：
+
+```bash
+ssh -i ~/.ssh/wb_deploy_ed25519 root@139.224.192.94 \
+  "docker exec workbench md5sum /app/public/index.html; \
+   docker images workbench --format '{{.Tag}} {{.ID}} {{.CreatedSince}}'"
+md5sum app/public/index.html        # 本机对比，两个哈希必须一致
+curl -s https://my-workspace.324614917.xyz/ | head -c 200
+```
 
 ## 排障
 
