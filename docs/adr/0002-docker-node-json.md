@@ -1,3 +1,10 @@
+---
+status: amended by ADR-0004 (鉴权部分)
+---
+
+> **2026-11-06 更新**：本 ADR 的**鉴权部分**已被 [ADR-0004](0004-auth-off.md) 取代——工作台自 2026-11-06 起免登录（`AUTH=off`），不再配应用内 Basic Auth。
+> 容器形态（`node:20-alpine`）、端口映射、数据目录、原子替换写等决策**仍然有效**，未变。
+
 # 部署形态：Docker 单容器 + Node 20 + Express + JSON 文件
 
 workbench 作为独立 compose 服务运行（`node:20-alpine`），映射宿主 8090，数据目录挂载到 `/opt/workbench/data`。改这么定是因为实测发现服务器上**没有 nginx、没有 PHP**，`:80` 由 `docker-proxy` 占着跑 `vbcd` 五容器栈——原定的「宝塔 PHP 站点」在这台机器上根本立不起来。
