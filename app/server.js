@@ -4,7 +4,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 // 领域常量与排序规则：与浏览器共用同一份（app/lib/domain.js）
-const { SLOTS, compareArrangements, groupKey, byOrder, normalizeOrder } = require('./lib/domain');
+const { SLOTS, compareArrangements, groupKey, byOrder, normalizeOrder, placeItem } = require('./lib/domain');
 // 存储层：安排数据怎么落盘、怎么读回（app/lib/store.js）
 const store = require('./lib/store');
 
@@ -163,6 +163,25 @@ app.post('/api/items/:id/move', (req, res) => {
   normalizeOrder(next.items);
   store.save(next);
   res.json({ item, moved: true });
+});
+
+// 落位：拖拽松手时一次说清「哪天 / 哪一段 / 第几位」，服务端不再猜。
+// 时段由落点决定，所以这里允许跨段；界面只负责把落点画清楚。
+app.post('/api/items/:id/place', (req, res) => {
+  const b = req.body || {};
+  if (!isDate(b.date)) return res.status(400).json({ error: 'date 非法' });
+  if (!SLOTS.includes(b.slot)) return res.status(400).json({ error: 'slot 非法' });
+  if (!Number.isInteger(b.index) || b.index < 0) return res.status(400).json({ error: 'index 需为非负整数' });
+
+  const db = store.load();
+  if (!db.items.some((it) => it.id === req.params.id)) return res.status(404).json({ error: '不存在' });
+
+  const next = store.envelope(db.items);
+  placeItem(next.items, req.params.id, b.date, b.slot, b.index);
+  const item = next.items.find((it) => it.id === req.params.id);
+  item.updatedAt = new Date().toISOString();
+  store.save(next);
+  res.json({ item });
 });
 
 app.get('/api/export', (req, res) => {

@@ -34,6 +34,15 @@ let items = [];
 let phoneDate = TODAY;
 let editState = null;
 
+// 拖拽状态。dropMode 为真时列里铺开三个投放格，静止态 DOM 与拖拽功能上线前完全一致
+let dropMode = false;
+let drag = null;
+let lastDropAt = 0;
+// 卡片 DOM → 安排对象：拖拽要认卡，但不往 DOM 里加属性（静止态要和服务端渲染的基线逐字一致）
+const itemOf = new WeakMap();
+// 拖拽起手时预取前后两周，翻周不必等跨境往返；一次即弃，写操作后清空
+const weekAhead = new Map();
+
 /* ---------------- 网络 ---------------- */
 
 async function api(path, opts) {
@@ -70,6 +79,15 @@ function withSignal(promise, signal) {
 async function loadWeek(signal) {
   const from = ymd(weekStart);
   const to = ymd(addDays(weekStart, 6));
+
+  // 拖拽翻页时用的是起手预取的那一份，翻过去立刻有内容
+  const key = from + '|' + to;
+  const ahead = weekAhead.get(key);
+  if (ahead) {
+    weekAhead.delete(key);
+    items = ahead;
+    return;
+  }
 
   const boot = window.__WB_BOOT__;
   if (!bootUsed && boot && boot.from === from && boot.to === to) {
@@ -153,6 +171,9 @@ function siblingsFn(list) {
     .sort(D.byOrder);
 }
 
+// 拖拽中的那张卡已从列表里摘走，落点索引按剩下的卡算
+const visibleItems = () => (drag ? items.filter((x) => x.id !== drag.item.id) : items);
+
 /* 时段选择：三个选项从 domain.js 生成，标签不再在 HTML 里写死 */
 function renderSlotPicker() {
   const seg = $('seg');
@@ -226,13 +247,40 @@ function makeCard(item, siblingsOf, idxForTilt = 0) {
     card.appendChild(note);
   }
 
-  const open = () => openEditor(item.date, item);
+  const open = () => {
+    // 拖拽松手后的那一次 click 不该顺带打开编辑框
+    if (Date.now() - lastDropAt < 260) return;
+    openEditor(item.date, item);
+  };
   card.addEventListener('click', open);
   card.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
   });
 
+  itemOf.set(card, item);
   return card;
+}
+
+// 投放格：拖拽时把一天的卡片按时段分成三格，落哪格算哪段
+function makeZone(date, slot, list, siblingsOf) {
+  const z = document.createElement('div');
+  z.className = 'zone z-' + slot;
+  z.dataset.date = date;
+  z.dataset.slot = slot;
+
+  const lab = document.createElement('span');
+  lab.className = 'zone-lab';
+  lab.textContent = D.SLOT_LABELS[slot];
+  z.appendChild(lab);
+
+  if (!list.length) {
+    const e = document.createElement('span');
+    e.className = 'zone-empty';
+    e.textContent = '空';
+    z.appendChild(e);
+  }
+  list.forEach((it, k) => z.appendChild(makeCard(it, siblingsOf, k)));
+  return z;
 }
 
 function renderHeader() {
@@ -245,7 +293,8 @@ function renderHeader() {
 function renderWeek() {
   const week = $('week');
   week.textContent = '';
-  const siblingsOf = siblingsFn(items);
+  const pool = visibleItems();
+  const siblingsOf = siblingsFn(pool);
 
   for (let i = 0; i < 7; i++) {
     const date = addDays(weekStart, i);
@@ -254,7 +303,7 @@ function renderWeek() {
     day.className = 'day' + (key === TODAY ? ' today' : '');
     day.dataset.date = key;
 
-    const list = items.filter((it) => it.date === key).sort(D.compareArrangements);
+    const list = pool.filter((it) => it.date === key).sort(D.compareArrangements);
 
     const head = document.createElement('div');
     head.className = 'day-head';
@@ -274,23 +323,30 @@ function renderWeek() {
     day.appendChild(head);
 
     const stack = document.createElement('div');
-    stack.className = 'stack';
-    list.forEach((it, k) => stack.appendChild(makeCard(it, siblingsOf, k)));
+    stack.className = 'stack' + (dropMode ? ' dropping' : '');
 
-    if (!list.length) {
-      const hint = document.createElement('p');
-      hint.className = 'empty';
-      hint.textContent = '空着';
-      stack.appendChild(hint);
+    if (dropMode) {
+      for (const slot of D.SLOTS) {
+        stack.appendChild(makeZone(key, slot, list.filter((it) => it.slot === slot), siblingsOf));
+      }
+    } else {
+      list.forEach((it, k) => stack.appendChild(makeCard(it, siblingsOf, k)));
+
+      if (!list.length) {
+        const hint = document.createElement('p');
+        hint.className = 'empty';
+        hint.textContent = '空着';
+        stack.appendChild(hint);
+      }
+
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'add';
+      add.textContent = '＋';
+      add.title = `在 ${monthDay(date)} 添加安排`;
+      add.addEventListener('click', () => openEditor(key, null));
+      stack.appendChild(add);
     }
-
-    const add = document.createElement('button');
-    add.type = 'button';
-    add.className = 'add';
-    add.textContent = '＋';
-    add.title = `在 ${monthDay(date)} 添加安排`;
-    add.addEventListener('click', () => openEditor(key, null));
-    stack.appendChild(add);
 
     day.appendChild(stack);
     week.appendChild(day);
@@ -321,7 +377,18 @@ function renderPhone() {
 
   const list = $('pList');
   list.textContent = '';
-  const dayItems = items.filter((it) => it.date === phoneDate).sort(D.compareArrangements);
+  list.classList.toggle('dropping', dropMode);
+
+  const pool = visibleItems();
+  const dayItems = pool.filter((it) => it.date === phoneDate).sort(D.compareArrangements);
+  const siblingsOf = siblingsFn(pool);
+
+  if (dropMode) {
+    for (const slot of D.SLOTS) {
+      list.appendChild(makeZone(phoneDate, slot, dayItems.filter((it) => it.slot === slot), siblingsOf));
+    }
+    return;
+  }
 
   if (!dayItems.length) {
     const empty = document.createElement('p');
@@ -330,7 +397,6 @@ function renderPhone() {
     list.appendChild(empty);
   } else {
     let lastSlot = null;
-    const siblingsOf = siblingsFn(items);
     for (const it of dayItems) {
       if (it.slot !== lastSlot) {
         const h = document.createElement('div');
@@ -489,6 +555,239 @@ $('editor').addEventListener('click', (e) => {
   if (e.target === $('editor')) closeEditor();
 });
 
+/* ---------------- 拖拽落位 ----------------
+   Pointer Events 一套走鼠标、触屏、触控笔。落点决定时段，没有「非法落点」。
+   松手先改界面再写服务端：跨境一来一回一两秒，等确认再动就像卡死。 */
+
+const FLIP_FIRST = 600;    // 贴边多久翻第一页
+const FLIP_REPEAT = 800;   // 之后每页的间隔，恒定不加速
+
+let placeQueue = Promise.resolve();
+let lastX = 0;
+let lastY = 0;
+let lastZone = null;
+let edgeTimer = 0;
+let edgeDir = 0;
+
+const isNarrow = () => window.matchMedia('(max-width:900px)').matches;
+
+// 串行发送：后一次的 index 是照前一次改完后的本地状态算的，
+// 乱序到达会让服务端的顺序和眼前看到的不一致。
+function sendPlace(id, date, slot, index) {
+  placeQueue = placeQueue.then(async () => {
+    try {
+      await api(`/api/items/${id}/place`, {
+        method: 'POST',
+        body: JSON.stringify({ date, slot, index }),
+      });
+      weekAhead.clear();
+    } catch (err) {
+      toast(err.message);
+      await refresh();
+    }
+  });
+}
+
+// 拖拽起手就把前后两周取回来，翻页时不用等网络
+function prefetchWeeks() {
+  for (const n of [-1, 1]) {
+    const from = ymd(addDays(weekStart, n * 7));
+    const to = ymd(addDays(weekStart, n * 7 + 6));
+    const key = from + '|' + to;
+    if (weekAhead.has(key)) continue;
+    api(`/api/items?from=${from}&to=${to}`)
+      .then((d) => { weekAhead.set(key, d.items || []); })
+      .catch(() => {});
+  }
+}
+
+function hitTest(x, y) {
+  if (!drag) return null;
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+
+  // 手机：直接把卡丢到周条某天，时段不变，排到那天该段末尾
+  const chip = el.closest('.chip');
+  if (chip) {
+    const i = Array.prototype.indexOf.call($('pStrip').children, chip);
+    if (i >= 0) {
+      const date = ymd(addDays(weekStart, i));
+      const slot = drag.item.slot;
+      const n = items.filter((it) => it.date === date && it.slot === slot && it.id !== drag.item.id).length;
+      return { date, slot, index: n, zone: null };
+    }
+  }
+
+  const z = el.closest('.zone');
+  if (!z) return null;
+
+  // 落在某张卡上半＝插它前面，下半＝插它后面
+  let index = 0;
+  for (const c of z.querySelectorAll('.card')) {
+    const r = c.getBoundingClientRect();
+    if (y > r.top + r.height / 2) index++; else break;
+  }
+  return { date: z.dataset.date, slot: z.dataset.slot, index, zone: z };
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  const card = e.target.closest('.card');
+  if (!card || e.target.closest('.acts')) return;
+  const item = itemOf.get(card);
+  if (!item) return;
+
+  drag = {
+    item, card,
+    x0: e.clientX, y0: e.clientY,
+    active: false,
+    armed: e.pointerType !== 'touch',
+    ghost: null, offsetX: 0, offsetY: 0,
+    timer: 0,
+  };
+  // 触屏要按住才拿起，否则一点就开始拖，列表滚不动
+  if (e.pointerType === 'touch') {
+    drag.timer = setTimeout(() => { if (drag) drag.armed = true; }, 180);
+  }
+});
+
+document.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  lastX = e.clientX;
+  lastY = e.clientY;
+
+  if (!drag.active) {
+    const dx = e.clientX - drag.x0;
+    const dy = e.clientY - drag.y0;
+    if (!drag.armed) {
+      if (Math.hypot(dx, dy) > 6) { clearTimeout(drag.timer); drag = null; }
+      return;
+    }
+    if (Math.hypot(dx, dy) < 5) return;
+    startDrag();
+  }
+
+  if (drag.ghost) {
+    drag.ghost.style.left = (e.clientX - drag.offsetX) + 'px';
+    drag.ghost.style.top = (e.clientY - drag.offsetY) + 'px';
+  }
+  highlight(e.clientX, e.clientY);
+  checkEdge(e.clientX);
+}, { passive: true });
+
+document.addEventListener('touchmove', (e) => {
+  if (drag && drag.active) e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('pointerup', (e) => {
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  if (!drag.active) { drag = null; return; }
+
+  const t = hitTest(e.clientX, e.clientY);
+  if (t) {
+    D.placeItem(items, drag.item.id, t.date, t.slot, t.index);
+    sendPlace(drag.item.id, t.date, t.slot, t.index);
+  } else if (edgeAt(e.clientX)) {
+    toast('边缘只翻页，不落位');
+  }
+
+  lastDropAt = Date.now();
+  endDrag();
+});
+
+document.addEventListener('pointercancel', () => {
+  if (drag && drag.active) { lastDropAt = Date.now(); endDrag(); }
+  else drag = null;
+});
+
+document.addEventListener('pointerleave', () => { if (drag && drag.active) stopEdge(); });
+window.addEventListener('blur', stopEdge);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && drag && drag.active) endDrag();
+});
+
+function startDrag() {
+  const rect = drag.card.getBoundingClientRect();
+  drag.active = true;
+  drag.offsetX = drag.x0 - rect.left;
+  drag.offsetY = drag.y0 - rect.top;
+
+  const g = drag.card.cloneNode(true);
+  const acts = g.querySelector('.acts');
+  if (acts) acts.remove();
+  g.className = drag.card.className + ' drag-ghost';
+  g.style.left = rect.left + 'px';
+  g.style.top = rect.top + 'px';
+  g.style.width = rect.width + 'px';
+  document.body.appendChild(g);
+  drag.ghost = g;
+
+  document.body.classList.add('dragging');
+  dropMode = true;
+  prefetchWeeks();
+  render();
+}
+
+function endDrag() {
+  if (drag && drag.ghost) drag.ghost.remove();
+  clearTimeout(drag && drag.timer);
+  drag = null;
+  lastZone = null;
+  stopEdge();
+  document.body.classList.remove('dragging');
+  dropMode = false;
+  render();
+}
+
+function highlight(x, y) {
+  const t = hitTest(x, y);
+  const z = t ? t.zone : null;
+  if (z === lastZone) return;
+  if (lastZone) lastZone.classList.remove('on');
+  if (z) z.classList.add('on');
+  lastZone = z;
+}
+
+function edgeAt(x) {
+  const edge = isNarrow() ? 34 : 12;   // 桌面再宽就会压到第一列卡片的左边
+  return x < edge ? -1 : x > window.innerWidth - edge ? 1 : 0;
+}
+
+// 贴边不放就按固定节拍翻页；离开边缘立即停拍，重新贴边从头计
+function checkEdge(x) {
+  const d = edgeAt(x);
+  if (d === edgeDir) return;
+  stopEdge();
+  if (!d) return;
+  edgeDir = d;
+  scheduleEdge(FLIP_FIRST);
+}
+
+function stopEdge() {
+  clearTimeout(edgeTimer);
+  edgeDir = 0;
+}
+
+function scheduleEdge(delay) {
+  edgeTimer = setTimeout(tickEdge, delay);
+}
+
+function tickEdge() {
+  if (!drag || !drag.active || !edgeDir) return;
+  if (isNarrow()) shiftDay(edgeDir); else shiftWeek(edgeDir, true);
+  flashPage();
+  scheduleEdge(FLIP_REPEAT);
+}
+
+function flashPage() {
+  const el = isNarrow() ? $('pDay') : $('wkKey');
+  el.classList.remove('flip');
+  void el.offsetWidth;
+  el.classList.add('flip');
+}
+
 /* ---------------- 导航 ---------------- */
 
 // 等待中的可视反馈：顶部一条进度线 + 内容区压暗。
@@ -500,15 +799,27 @@ function setBusy(on) {
 }
 
 // 翻周时停在同一个星期几上，手机端不会跳回周一
-function shiftWeek(n) {
+function shiftWeek(n, quiet) {
   const idx = Math.round((parseYmd(phoneDate) - weekStart) / 86400000);
   weekStart = addDays(weekStart, n * 7);
   phoneDate = ymd(addDays(weekStart, Math.min(6, Math.max(0, idx))));
   // 乐观更新：周区间与日期条先换掉，内容等数据回来再补
   renderHeader();
   renderStrip();
+  // 拖拽中不能走忙碌态：那层会把 stage 的指针事件关掉，落点判定全废
+  if (quiet) { refresh(); return; }
   setBusy(true);
   refresh().finally(() => setBusy(false));
+}
+
+function shiftDay(n) {
+  const next = addDays(parseYmd(phoneDate), n);
+  phoneDate = ymd(next);
+  const ws = startOfWeek(next);
+  if (ymd(ws) !== ymd(weekStart)) weekStart = ws;
+  renderHeader();
+  renderStrip();
+  refresh();
 }
 
 function goToday() {
@@ -531,6 +842,7 @@ $('pNextW').addEventListener('click', () => shiftWeek(1));
 document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea')) return;
   if ($('editor').open) return;
+  if (drag) return;
   if (e.key === 'ArrowLeft') shiftWeek(-1);
   if (e.key === 'ArrowRight') shiftWeek(1);
 });

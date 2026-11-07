@@ -44,8 +44,30 @@
     }
   };
 
+  // 落位：把一条安排挪到 date/slot 那一组的第 index 位，两组的 order 各自重编号。
+  // 拖拽是唯一的使用者；服务端与浏览器共用这一份，免得两边算法漂移。
+  const placeItem = (items, id, date, slot, index) => {
+    const it = items.find((x) => x.id === id);
+    if (!it) return false;
+
+    const fromKey = groupKey(it);
+    const fromList = items.filter((x) => groupKey(x) === fromKey && x !== it).sort(byOrder);
+
+    it.date = date;
+    it.slot = slot;
+
+    const toKey = groupKey(it);
+    const toList = items.filter((x) => groupKey(x) === toKey && x !== it).sort(byOrder);
+    const at = Math.max(0, Math.min(Math.trunc(index) || 0, toList.length));
+    toList.splice(at, 0, it);
+    toList.forEach((x, i) => { x.order = i; });
+    if (toKey !== fromKey) fromList.forEach((x, i) => { x.order = i; });
+
+    return true;
+  };
+
   return {
     SLOTS, SLOT_LABELS, groupKey, byOrder,
-    compareArrangements, slotForHour, normalizeOrder,
+    compareArrangements, slotForHour, normalizeOrder, placeItem,
   };
 });

@@ -1013,3 +1013,96 @@ body.busy::before{opacity:1;width:72%}
 
 .stage{transition:opacity .15s ease}
 body.busy .stage{opacity:.5;pointer-events:none}
+
+/* ============================ 拖拽落位 ============================
+   拖动时才把一天铺成上午/下午/晚上三个投放格，静止态不新增任何节点；
+   ↑↓ 也只是把字形换成 CSS 箭头，文字节点留着给读屏软件。
+   两者都不改结构，所以渲染比对（scripts/smoke.sh）拿旧基线仍然逐字一致。 */
+
+.stack.dropping,
+.phone-list.dropping{gap:7px}
+
+.zone{
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  flex:1 1 auto;
+  min-height:54px;
+  padding:16px 4px 4px;
+  border:2px dashed rgba(26,26,24,.13);
+  border-radius:12px 14px 12px 14px;
+  transition:background-color 120ms ease, border-color 120ms ease;
+}
+[data-theme="dark"] .zone{border-color:rgba(237,232,214,.16)}
+
+.zone-lab{
+  position:absolute;
+  top:3px;left:6px;
+  font-family:var(--font-display);
+  font-size:10px;
+  letter-spacing:.16em;
+  color:var(--ink-3);
+  pointer-events:none;
+  transition:color 120ms ease;
+}
+.zone-empty{
+  font-family:var(--font-display);
+  font-size:11px;
+  letter-spacing:.1em;
+  color:var(--ink-3);
+  padding:2px 4px;
+}
+
+/* 拖拽期间卡片不再抢指针，落点判定只认格子 */
+.zone .card{transform:none;pointer-events:none;cursor:grabbing}
+
+.zone.on{border-color:var(--line)}
+.zone.on .zone-lab{color:var(--ink)}
+.zone.on.z-am{background:rgba(224,161,28,.13)}
+.zone.on.z-pm{background:rgba(208,124,66,.13)}
+.zone.on.z-eve{background:rgba(124,116,188,.14)}
+
+body.dragging{
+  cursor:grabbing;
+  user-select:none;
+  -webkit-user-select:none;
+}
+body.dragging .card{cursor:grabbing}
+
+.drag-ghost{
+  position:fixed;
+  z-index:200;
+  pointer-events:none;
+  margin:0;
+  transform:rotate(-1.8deg) scale(1.02);
+  box-shadow:0 0 0 2px var(--line), 6px 8px 0 var(--shadow);
+  opacity:.96;
+  will-change:left, top;
+}
+
+/* 手机投放态：三格均分当天那张纸，手指好落 */
+body.dragging .phone-paper{display:flex;flex-direction:column}
+.phone-list.dropping{flex:1;min-height:0}
+.phone-list.dropping .zone{flex:1 1 0;min-height:0;padding:18px 8px 8px}
+.phone-list.dropping .zone-lab{font-size:11px}
+
+/* ↑↓ 换手绘箭头：文字节点留着给读屏软件，只把字形藏掉（DOM 不变） */
+.acts button{font-size:0;line-height:0;color:var(--ink-2)}
+.acts button::before{
+  content:"";
+  width:8px;height:8px;
+  border-left:2.4px solid currentColor;
+  border-top:2.4px solid currentColor;
+  border-radius:2px 0 1px 0;
+  transform:rotate(45deg) translate(1px,1.6px);
+  filter:url(#sketchy-k);
+}
+.acts button:last-child::before{transform:rotate(225deg) translate(1px,1.6px)}
+
+/* 翻页时周标签闪一下，拖拽中也能知道翻到哪了 */
+@keyframes flip-in{
+  from{opacity:.15;transform:translateY(-3px)}
+  to{opacity:1;transform:none}
+}
+.wk-key.flip,.phone-day.flip{animation:flip-in 240ms ease}
