@@ -70,7 +70,13 @@ app.get('/api/items', (req, res) => {
   if (!isDate(from) || !isDate(to)) return res.status(400).json({ error: 'from/to 需为 YYYY-MM-DD' });
   if (from > to) return res.status(400).json({ error: 'from 不能晚于 to' });
   const items = store.load().items.filter((it) => it.date >= from && it.date <= to).sort(compareArrangements);
-  res.json({ items });
+  // 带 ETag：翻回上一周（数据没变）时直接 304，响应体为空。
+  // 移动端每次翻周都要过一次跨境往返，省掉响应体能少几百字节的传输
+  const body = JSON.stringify({ items });
+  const etag = 'W/"' + crypto.createHash('sha1').update(body).digest('base64url') + '"';
+  res.set('ETag', etag);
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  res.type('application/json').send(body);
 });
 
 app.post('/api/items', (req, res) => {
@@ -167,7 +173,19 @@ app.get('/api/export', (req, res) => {
 // 领域模块：浏览器要的那一份（与服务端 require 的是同一个文件）
 app.get('/domain.js', (req, res) => res.sendFile(path.join(__dirname, 'lib', 'domain.js')));
 
-app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html', extensions: ['html'] }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  index: 'index.html',
+  extensions: ['html'],
+  setHeaders(res, filePath) {
+    // 文件名里没有内容指纹，所以不能上 immutable —— 那会把旧版钉死在浏览器缓存里。
+    // 给一小时并要求回源校验：重复访问直接吃本地缓存，发版后仍能拿到新版。
+    if (/\.(css|js|svg|png|jpe?g|gif|ico|webp|woff2?)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+    }
+  },
+}));
 
 app.use((req, res) => res.status(404).type('text/plain; charset=utf-8').send('404'));
 

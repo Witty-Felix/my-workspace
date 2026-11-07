@@ -992,3 +992,24 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   }
   .card, .btn, .ic, .add{transition-duration:160ms!important}
 }
+
+/* ============================ 等待反馈 ============================
+   一个来回可能要一两秒（跨境链路尤甚），没这层反馈就只剩「点了没反应」。
+   进度线走 body::before，内容压暗走 body.busy —— 都不新增 DOM 节点，
+   这样渲染结果的比对（scripts/smoke.sh）不受影响。 */
+
+body::before{
+  content:"";
+  position:fixed;
+  top:0;left:0;
+  height:3px;width:0;
+  z-index:99;
+  background:var(--sun);
+  opacity:0;
+  pointer-events:none;
+  transition:width .3s ease, opacity .2s ease;
+}
+body.busy::before{opacity:1;width:72%}
+
+.stage{transition:opacity .15s ease}
+body.busy .stage{opacity:.5;pointer-events:none}

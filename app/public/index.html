@@ -5,7 +5,36 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#E4E2DB" id="metaTheme">
 <title>周工作台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23F5C518' stroke='%231A1A18' stroke-width='1.7' stroke-linejoin='round' d='M12 2.6l1.9 6.2 6.2 1.9-6.2 1.9L12 18.8l-1.9-6.2L3.9 10.7l6.2-1.9z'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
+
+<!-- 首屏预取：HTML 一解析就把本周数据请求打出去，和 CSS/JS 的下载并行。
+     原来要等 app.js 下载并执行完才发请求，等于白等一个完整往返——跨境链路下这一下就是 1~2 秒。
+     app.js 会复用这里的 promise（见 app.js 的 loadWeek），失败也照常走原有的重试路径。 -->
+<script>
+(function () {
+  var p = function (n) { return n < 10 ? '0' + n : '' + n; };
+  var ymd = function (d) { return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); };
+  var now = new Date();
+  var start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  var end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+  var from = ymd(start);
+  var to = ymd(end);
+  try {
+    window.__WB_BOOT__ = {
+      from: from,
+      to: to,
+      data: fetch('api/items?from=' + from + '&to=' + to)
+        .then(function (r) {
+          if (!r.ok) throw new Error('请求失败（' + r.status + '）');
+          return r.json();
+        })
+    };
+  } catch (e) {
+    window.__WB_BOOT__ = null;
+  }
+})();
+</script>
 </head>
 <body>
 

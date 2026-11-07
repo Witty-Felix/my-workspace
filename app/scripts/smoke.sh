@@ -94,10 +94,19 @@ done
 if [ -z "$BROWSER" ]; then
   skip "没找到浏览器，跳过 DOM 比对"
 else
-  dump() { # 归一化：去掉标签间空白与空行，丢掉 domain.js 脚本标签（含它的闭合标签）
+  dump() { # 归一化：去掉标签间空白与空行，跳过 head 里的构建细节（script/link）
+    # script 整段跳过（含内联脚本），link 单行跳过 —— 比对的是「渲染出了什么」，
+    # 不是「用了什么构建方式」。script 挂掉由下面第 3 项（卡片数）兜底。
     "$BROWSER" --headless=new --disable-gpu --virtual-time-budget=6000 --dump-dom "$1" 2>/dev/null \
       | sed 's/></>\n</g' | grep -v '^[[:space:]]*$' \
-      | awk '{ if (skip) { skip=0; next } if ($0 ~ /<script src="domain.js">/) { skip=1; next } gsub(/^[ \t]+|[ \t]+$/, ""); print }'
+      | awk '{
+          if (skip) { if ($0 ~ /<\/script>/) skip=0; next }
+          if ($0 ~ /<script/) { if ($0 !~ /<\/script>/) skip=1; next }
+          if (skipc) { if ($0 ~ /-->/) skipc=0; next }
+          if ($0 ~ /^<!--/) { if ($0 !~ /-->/) skipc=1; next }
+          if ($0 ~ /^<link /) next
+          gsub(/^[ \t]+|[ \t]+$/, ""); print
+        }'
   }
   dump "http://127.0.0.1:$OLD_PORT/" > "$SCRATCH/dom-old.txt"
   dump "http://127.0.0.1:$NEW_PORT/" > "$SCRATCH/dom-new.txt"

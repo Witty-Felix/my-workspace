@@ -50,24 +50,61 @@ async function api(path, opts) {
   return res.json();
 }
 
-async function loadWeek() {
+// 首屏那次请求：index.html 的内联脚本在 HTML 解析时就发了，这里直接捡现成的
+let bootUsed = false;
+
+// 把一个 promise 绑到 AbortSignal 上：signal 触发时一起 reject
+function withSignal(promise, signal) {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(Object.assign(new Error('已取消'), { name: 'AbortError' }));
+    if (signal.aborted) { onAbort(); return; }
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (v) => { signal.removeEventListener('abort', onAbort); resolve(v); },
+      (e) => { signal.removeEventListener('abort', onAbort); reject(e); }
+    );
+  });
+}
+
+async function loadWeek(signal) {
   const from = ymd(weekStart);
   const to = ymd(addDays(weekStart, 6));
-  const data = await api(`/api/items?from=${from}&to=${to}`);
+
+  const boot = window.__WB_BOOT__;
+  if (!bootUsed && boot && boot.from === from && boot.to === to) {
+    bootUsed = true;
+    const data = await withSignal(boot.data, signal);
+    items = data.items || [];
+    return;
+  }
+
+  const data = await api(`/api/items?from=${from}&to=${to}`, { signal });
   items = data.items || [];
 }
 
+// 同一时刻只留一个列表请求：连点翻周时，后发的会把先发的取消掉，
+// 免得几个响应回来后互相覆盖、界面来回跳
+let inflight = null;
+
 async function refresh(retryLeft = 1) {
+  if (inflight) { try { inflight.abort(); } catch (_) {} }
+  const ctrl = new AbortController();
+  inflight = ctrl;
   try {
-    await loadWeek();
+    await loadWeek(ctrl.signal);
+    if (inflight !== ctrl) return;
     render();
   } catch (err) {
+    if (err.name === 'AbortError') return;   // 被更新的请求顶掉了，静默
     // 4xx 是参数/权限问题，重试没用；网络错误与 5xx 才重试一次
     if (retryLeft > 0 && (!err.status || err.status >= 500)) {
       setTimeout(() => refresh(retryLeft - 1), 600);
       return;
     }
     toast(err.message);
+  } finally {
+    if (inflight === ctrl) inflight = null;
   }
 }
 
@@ -381,11 +418,14 @@ function closeEditor() {
 }
 
 async function move(item, dir) {
+  setBusy(true);
   try {
     await api(`/api/items/${item.id}/move`, { method: 'POST', body: JSON.stringify({ dir }) });
     await refresh();
   } catch (err) {
     toast(err.message);
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -406,6 +446,7 @@ $('form').addEventListener('submit', async (e) => {
 
   const btn = e.submitter || document.querySelector('#form .primary');
   if (btn) btn.disabled = true;
+  setBusy(true);
   try {
     if (editState.item) {
       await api(`/api/items/${editState.item.id}`, {
@@ -425,6 +466,7 @@ $('form').addEventListener('submit', async (e) => {
     $('err').hidden = false;
   } finally {
     if (btn) btn.disabled = false;
+    setBusy(false);
   }
 });
 
@@ -449,18 +491,33 @@ $('editor').addEventListener('click', (e) => {
 
 /* ---------------- 导航 ---------------- */
 
+// 等待中的可视反馈：顶部一条进度线 + 内容区压暗。
+// 跨境链路上一个往返可能一两秒，没有这层反馈用户只会觉得「点了没反应」。
+let busyCount = 0;
+function setBusy(on) {
+  busyCount = Math.max(0, busyCount + (on ? 1 : -1));
+  document.body.classList.toggle('busy', busyCount > 0);
+}
+
 // 翻周时停在同一个星期几上，手机端不会跳回周一
 function shiftWeek(n) {
   const idx = Math.round((parseYmd(phoneDate) - weekStart) / 86400000);
   weekStart = addDays(weekStart, n * 7);
   phoneDate = ymd(addDays(weekStart, Math.min(6, Math.max(0, idx))));
-  refresh();
+  // 乐观更新：周区间与日期条先换掉，内容等数据回来再补
+  renderHeader();
+  renderStrip();
+  setBusy(true);
+  refresh().finally(() => setBusy(false));
 }
 
 function goToday() {
   weekStart = startOfWeek(new Date());
   phoneDate = TODAY;
-  refresh();
+  renderHeader();
+  renderStrip();
+  setBusy(true);
+  refresh().finally(() => setBusy(false));
 }
 
 $('prev').addEventListener('click', () => shiftWeek(-1));
