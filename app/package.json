@@ -9,6 +9,7 @@
     "check": "bash scripts/check.sh",
     "smoke": "bash scripts/smoke.sh",
     "adr": "bash scripts/check-adr.sh",
+    "docs": "bash scripts/check-docs.sh",
     "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {

@@ -22,6 +22,8 @@ jobs:
         run: bash app/scripts/check.sh
       - name: ADR 漂移检查
         run: bash app/scripts/check-adr.sh --warn
+      - name: 文档事实检查（deploy.md 与线上现状是否一致）
+        run: bash app/scripts/check-docs.sh --warn
       - name: 端到端回归（接口契约 / 渲染 / 首屏重试）
         working-directory: app
         run: bash scripts/smoke.sh HEAD~1

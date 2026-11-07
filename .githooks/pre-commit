@@ -12,4 +12,7 @@ bash app/scripts/check.sh || exit 1
 echo "[pre-commit] ADR 漂移检查"
 bash app/scripts/check-adr.sh || exit 1
 
+echo "[pre-commit] 文档事实检查"
+bash app/scripts/check-docs.sh || exit 1
+
 echo "[pre-commit] 通过"
