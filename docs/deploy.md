@@ -59,7 +59,7 @@ buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/
 | 域名 | `324614917.xyz`，腾讯云注册（注册商帝思普） |
 | NS | `deer.dnspod.net` / `false.dnspod.net`（腾讯云 DNSPod 免费版） |
 | 解析 | `my-workspace` A → `139.224.192.94`，**直连，无代理层** |
-| 证书 | TrustAsia DV（`TrustAsia DV TLS RSA CA 2024` 签发），90 天 |
+| 证书 | Let's Encrypt 泛域名（`*.324614917.xyz` + 裸域），acme.sh 自动续期 |
 | 入口 | 手机/浏览器 → 阿里云上海源站 443 → `gateway` 按 `server_name` 命中工作台 |
 
 **为什么从 Cloudflare 迁走**：CF 免费版在大陆无边缘节点，国内请求被调度到海外（实测 `cf-ray: ...-AMS`），同一条链路实测首字节直连 50ms vs 走 CF 1922ms，差 38 倍。详见 ADR-0005。
@@ -96,7 +96,7 @@ export DP_Id=<DNSPod ID>; export DP_Key=<DNSPod Token>
 **排查口诀**：先问权威服务器，别看面板。
 - 是否直连：`nslookup my-workspace.324614917.xyz` 应回 `139.224.192.94`；若回 `104.21.x` / `172.67.x`，说明仍在走 CF 代理或本地缓存未过期。
 - 注册局怎么说：`curl https://rdap.centralnic.com/xyz/domain/324614917.xyz`（无缓存，比 DoH 可靠）。
-- 证书是否生效：`openssl s_client -connect 139.224.192.94:443 -servername my-workspace.324614917.xyz | openssl x509 -noout -issuer`，应显示 TrustAsia 而非自签。
+- 证书是否生效：`openssl s_client -connect 139.224.192.94:443 -servername my-workspace.324614917.xyz | openssl x509 -noout -issuer`，应显示 Let's Encrypt 而非自签；同时看 SAN 是否含 `*.324614917.xyz`。
 - DNSPod 显示「未使用云解析 DNS 地址」= 注册局 NS 与 DNSPod 分配的不一致；域名详情页悬停该状态可看到要求填写的 NS 对。
 
 **已下线（2026-11-07，经确认不再使用）**：`api.324614917.xyz`（CNAME → `jiese-checkin.pages.dev`，Cloudflare Pages 绑定随 zone 迁出而失效）、`izzy-happybirthday.324614917.xyz`（生日页）。
