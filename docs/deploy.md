@@ -64,6 +64,8 @@ buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/
 
 **为什么从 Cloudflare 迁走**：CF 免费版在大陆无边缘节点，国内请求被调度到海外（实测 `cf-ray: ...-AMS`），同一条链路实测首字节直连 50ms vs 走 CF 1922ms，差 38 倍。详见 ADR-0005。
 
+**换机器或换 IP 时**：① 改 DNSPod 里 `my-workspace` 的 A 记录指向新 IP；② 在新机器上装 acme.sh 重签证书（域名不变，泛域名照旧，装法与坑见下）。两步都不影响此时仍在服役的旧机器。
+
 源站证书：`/opt/gateway/certs/{fullchain,privkey}.pem`。当前为 **Let's Encrypt 泛域名**（`*.324614917.xyz` + `324614917.xyz`），由 **acme.sh 自动续期**，不需要人工介入。
 
 **签发与续期（已自动化，下面是原理与手工兜底）**
