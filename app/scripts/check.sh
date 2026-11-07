@@ -29,6 +29,8 @@ while IFS= read -r d; do
   [ "$d" = "node_modules" ] && continue
   [ "$d" = "scripts" ] && continue
   [ "$d" = "data" ] && continue
+  # 隐藏目录是脚本自己的临时空间（.smoke / .drag-smoke），不进镜像也不该要求 COPY
+  case "$d" in .*) continue;; esac
   if grep -qF "COPY $d " Dockerfile; then ok "目录 $d 已加入镜像"; else bad "目录 $d 没有 COPY 行，镜像会缺它"; fi
 done < <(find . -maxdepth 1 -mindepth 1 -type d -printf '%f\n' | sort)
 
@@ -47,6 +49,21 @@ if [ -n "$icrlf" ]; then
   printf '%s\n' "$icrlf" | sed 's/^/      /'
 else
   ok "索引侧全部 LF"
+fi
+
+echo
+echo "== 4. 行内语句（大括号后不要挤代码）==="
+# node --check 只认语法，看不出「换行被吃掉、语句挤进同一行」这种伤。
+# 一行式 try/catch 是本仓库的既有写法（`{ ... }` 里只隔一个空格），
+# 所以只在「大括号后跟两个以上空格再接内容」时报警——那几乎总是丢了换行。
+inlined="$(while IFS= read -r f; do
+  awk 'match($0, /\{[ \t][ \t]+[^ \t]/) { printf "%s:%d\n", FILENAME, FNR }' "$f"
+done < <(find . -name node_modules -prune -o -name '*.js' -print | sed 's|^\./||' | sort))"
+if [ -n "$inlined" ]; then
+  bad "有大括号后直接挤了语句的行"
+  printf '%s\n' "$inlined" | sed 's/^/      /'
+else
+  ok "没有挤在一行的大括号"
 fi
 
 echo
