@@ -5,3 +5,6 @@ app/.env
 app/.smoke-data/
 app/.smoke.log
 app/.smoke/
+# 设计过程产物：原型 HTML 与渲染截图都是可再生的，不进仓库
+design/
+out/
