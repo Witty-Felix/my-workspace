@@ -11,7 +11,7 @@
 | 数据 | `/opt/workbench/data/data.json`（挂载进容器 `/app/data`） |
 | 备份 | 同目录 `data.json.bak`，每次写入前的上一版 |
 | 访问 | **`https://my-workspace.324614917.xyz/`**（DNSPod 解析直指源站 `139.224.192.94:443` → 网关 → 工作台，**不再经 Cloudflare**） |
-| 证书 | TrustAsia DV，`/opt/gateway/certs/{fullchain,privkey}.pem`，**90 天有效**，旧自签备份在 `certs.bak-20261107/` |
+| 证书 | **Let's Encrypt 泛域名**（`*.324614917.xyz` + `324614917.xyz`），acme.sh 自动签发与续期，无需人工 |
 | 备用入口 | `http://139.224.192.94/workbench/`、`http://139.224.192.94:8090/` |
 | 网关 | `gateway` 容器（`nginx:alpine`），配置在 `/opt/gateway`，同仓库 `deploy/gateway/` |
 | 登录 | **已关闭**（`.env` 里 `AUTH=off`）。恢复登录：把 `.env` 改成 `AUTH=basic` + 填 `AUTH_USER`/`AUTH_PASS`，再 `docker compose up -d` |
@@ -64,17 +64,32 @@ buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/
 
 **为什么从 Cloudflare 迁走**：CF 免费版在大陆无边缘节点，国内请求被调度到海外（实测 `cf-ray: ...-AMS`），同一条链路实测首字节直连 50ms vs 走 CF 1922ms，差 38 倍。详见 ADR-0005。
 
-源站证书：`/opt/gateway/certs/{fullchain,privkey}.pem`。当前为 TrustAsia DV，**90 天到期需续签**（签发 2026-11-07，到期 2027-02-05）。旧自签证书备份在 `/opt/gateway/certs.bak-20261107/`。
+源站证书：`/opt/gateway/certs/{fullchain,privkey}.pem`。当前为 **Let's Encrypt 泛域名**（`*.324614917.xyz` + `324614917.xyz`），由 **acme.sh 自动续期**，不需要人工介入。
 
-**换证书步骤**：证书目录是按目录挂载（`./certs:/etc/nginx/certs:ro`），替换两个文件后
+**签发与续期（已自动化，下面是原理与手工兜底）**
+
 ```bash
-chmod 644 /opt/gateway/certs/fullchain.pem
-chmod 600 /opt/gateway/certs/privkey.pem
-docker exec gateway nginx -t && docker exec gateway nginx -s reload
-```
-`reload` 即可生效；若换成单文件挂载则必须 `up -d --force-recreate`（inode 坑）。
+# 证书存放与续期计划
+/root/.acme.sh/acme.sh --list          # 看到期与下次续期时间
+crontab -l | grep acme                 # 每日 4 次（1/7/13/19 点）检查，到期前 30 天自动续
 
-**续期提醒**：免费 DV 只有 90 天。到期前可在腾讯云 SSL 控制台重新申请（DNS 验证会自动通过，因为域名已在 DNSPod），或后续上 `acme.sh` + DNSPod API 自动续。
+# 手工强制重签（一般用不到）
+export DP_Id=<DNSPod ID>; export DP_Key=<DNSPod Token>
+/root/.acme.sh/acme.sh --issue --dns dns_dp \
+  -d 324614917.xyz -d '*.324614917.xyz' --server letsencrypt --keylength 2048
+/root/.acme.sh/acme.sh --install-cert -d 324614917.xyz \
+  --key-file /opt/gateway/certs/privkey.pem \
+  --fullchain-file /opt/gateway/certs/fullchain.pem \
+  --reloadcmd "chmod 600 /opt/gateway/certs/privkey.pem; chmod 644 /opt/gateway/certs/fullchain.pem; docker exec gateway nginx -t && docker exec gateway nginx -s reload"
+```
+
+**关键事实**
+- API 凭据存在 `/root/.acme.sh/account.conf`（权限 600，键名 `SAVED_DP_Id` / `SAVED_DP_Key`），cron 续期自取，不需要环境变量。
+- 续期后自动执行 `reloadcmd`：改权限 → `nginx -t` → `nginx -s reload`，无需重启容器。
+- **acme.sh 自动升级已关闭**（`--auto-upgrade 0`）：服务器的 `raw.githubusercontent.com` 不可达（SSL_ERROR_SYSCALL），开着只会每天报错。
+- 装 acme.sh 时也是因此绕的弯：源码包在本机下载后 scp 上传，不走服务器直连 GitHub。
+- 证书备份：`certs.bak-trustasia-20261107/`（TrustAsia，已停用）、`certs.bak-20261107/`（更早的自签）。
+- 泛域名意味着**以后新增子域不用再签证书**，只要在 DNSPod 加 A 记录并在网关加对应 `server_name`。
 
 **根域 `324614917.xyz` 归 buddy**，网关的默认 server 块负责；别把它也指到工作台。
 
@@ -165,7 +180,7 @@ docker tag workbench:prev workbench:latest && docker compose up -d
 ## 已知限制
 
 - **源站 IP 直接暴露**，无 CDN/DDoS 防护（2026-11-07 起不再经 Cloudflare）。
-- **证书 90 天到期需续签**（免费 DV 的硬限制），到期不换浏览器会报错。见上「续期提醒」。
+- **证书靠 acme.sh 自动续**：cron 每天检查、到期前 30 天自动重签并 reload 网关；若 cron 或 DNSPod Token 失效，证书到期（90 天）后浏览器会报错，需查 `acme.sh --list` 与 `crontab -l`。
 - **未备案域名直连国内服务器**，严格说不合规；长期解是 ICP 备案 + 腾讯云 EdgeOne。
 - 单用户模型，没有账号体系；`data.json` 全量读写，多人并发会互相覆盖。
 - 端口 8090 依赖阿里云**轻量应用服务器**的「防火墙」（不是 ECS 安全组，这台机器是 SWAS）；换端口要同时改 `docker-compose.yml` 与控制台防火墙规则。当前已放行：80 / 443 / 22 / ICMP / 8090。

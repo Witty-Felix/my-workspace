@@ -28,7 +28,7 @@ date: 2026-11-07
 ## Consequences
 
 - **源站 IP 直接暴露**，失去 Cloudflare 的 DDoS 防护与边缘缓存。个人工具站可接受，风险写进文档而非藏起来。
-- **HTTPS 必须靠源站自己**：自签证书只能骗过 CF 的 `Full` 模式，浏览器直连会报警，因此同步换成 TrustAsia DV；**90 天到期**（2027-02-05），续期需人工或后续上 acme.sh + DNSPod API 自动签。
+- **HTTPS 必须靠源站自己**：自签证书只能骗过 CF 的 `Full` 模式，浏览器直连会报警，因此换为公共 CA 证书。当前为 **Let's Encrypt 泛域名**（`*.324614917.xyz` + 裸域），由 **acme.sh + DNSPod API（DNS-01）自动签发与续期**，cron 每日检查、到期前 30 天自动重签并 reload 网关，**无需人工介入**。走过一段弯路：先用了 TrustAsia 免费 DV（90 天需手工续），同日改为 acme.sh 自动化。
 - **Cloudflare Pages 绑定失效**：`api.324614917.xyz`（CNAME → `jiese-checkin.pages.dev`）依赖 zone 托管在 CF，切走后不再服务；`izzy-happybirthday`（生日页）一并下线。二者经确认均不再使用。
 - **合规缺口仍在**：未备案域名直连国内服务器严格说不合规（阿里云轻量目前不拦截）。长期解仍是备案 + EdgeOne。
 - **回滚**：DNS 改回 `stanley.ns.cloudflare.com` / `amalia.ns.cloudflare.com` 即恢复原链路；CF 侧 zone 与记录未删除，证书备份在 `/opt/gateway/certs.bak-20261107/`。
