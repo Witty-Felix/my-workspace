@@ -10,7 +10,8 @@
 | 端口 | 宿主 `8090` → 容器 `8090` |
 | 数据 | `/opt/workbench/data/data.json`（挂载进容器 `/app/data`） |
 | 备份 | 同目录 `data.json.bak`，每次写入前的上一版 |
-| 访问 | **`https://my-workspace.324614917.xyz/`**（Cloudflare → 源站 80/443 → 网关 → 工作台） |
+| 访问 | **`https://my-workspace.324614917.xyz/`**（DNSPod 解析直指源站 `139.224.192.94:443` → 网关 → 工作台，**不再经 Cloudflare**） |
+| 证书 | TrustAsia DV，`/opt/gateway/certs/{fullchain,privkey}.pem`，**90 天有效**，旧自签备份在 `certs.bak-20261107/` |
 | 备用入口 | `http://139.224.192.94/workbench/`、`http://139.224.192.94:8090/` |
 | 网关 | `gateway` 容器（`nginx:alpine`），配置在 `/opt/gateway`，同仓库 `deploy/gateway/` |
 | 登录 | **已关闭**（`.env` 里 `AUTH=off`）。恢复登录：把 `.env` 改成 `AUTH=basic` + 填 `AUTH_USER`/`AUTH_PASS`，再 `docker compose up -d` |
@@ -49,24 +50,41 @@ ssh root@139.224.192.94 "docker exec gateway nginx -t && docker exec gateway ngi
 
 buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/docker-compose.yml`，改前备份为 `docker-compose.yml.bak-*`）。**它不是本仓库的文件**，日后 buddy 若拉上游新版本，需要重新合并这一行。
 
-## 子域名接入（Cloudflare）
+## 子域名接入（DNSPod 直连，2026-11-07 起）
 
-**已接通。** 真实域名是 `324614917.xyz`（9 位数字）。早期排查用的 `3246146917.xyz`（10 位）从未在注册局存在，纯属多打一位，配置里仅保留作占位。
+**已接通，且不再经 Cloudflare。** 真实域名是 `324614917.xyz`（9 位数字）。早期排查用的 `3246146917.xyz`（10 位）从未在注册局存在，纯属多打一位，配置里仅保留作占位。
 
 | 项 | 状态 |
 |---|---|
-| 域名 | `324614917.xyz`，腾讯云注册（注册商帝思普），Cloudflare 托管，橙云 Proxied |
-| NS | `stanley` / `amalia.ns.cloudflare.com`（正确） |
-| 子域记录 | `my-workspace` A → `139.224.192.94`，橙色云 |
-| 边缘证书 | Cloudflare Universal SSL，Let's Encrypt 签发，浏览器直接信任 |
-| 回源 | Cloudflare → 源站 80/443 → `gateway` 按 `server_name` 命中工作台 |
+| 域名 | `324614917.xyz`，腾讯云注册（注册商帝思普） |
+| NS | `deer.dnspod.net` / `false.dnspod.net`（腾讯云 DNSPod 免费版） |
+| 解析 | `my-workspace` A → `139.224.192.94`，**直连，无代理层** |
+| 证书 | TrustAsia DV（`TrustAsia DV TLS RSA CA 2024` 签发），90 天 |
+| 入口 | 手机/浏览器 → 阿里云上海源站 443 → `gateway` 按 `server_name` 命中工作台 |
 
-源站证书：`/opt/gateway/certs/{fullchain,privkey}.pem`，自签、10 年，SAN 含 `my-workspace.324614917.xyz`、`324614917.xyz`。要换成 Cloudflare Origin CA 证书并把 SSL 模式提到 `Full (strict)` 时，替换两个文件后 `docker compose up -d --force-recreate`（不是 reload，见上面的 inode 坑）。
+**为什么从 Cloudflare 迁走**：CF 免费版在大陆无边缘节点，国内请求被调度到海外（实测 `cf-ray: ...-AMS`），同一条链路实测首字节直连 50ms vs 走 CF 1922ms，差 38 倍。详见 ADR-0005。
+
+源站证书：`/opt/gateway/certs/{fullchain,privkey}.pem`。当前为 TrustAsia DV，**90 天到期需续签**（签发 2026-11-07，到期 2027-02-05）。旧自签证书备份在 `/opt/gateway/certs.bak-20261107/`。
+
+**换证书步骤**：证书目录是按目录挂载（`./certs:/etc/nginx/certs:ro`），替换两个文件后
+```bash
+chmod 644 /opt/gateway/certs/fullchain.pem
+chmod 600 /opt/gateway/certs/privkey.pem
+docker exec gateway nginx -t && docker exec gateway nginx -s reload
+```
+`reload` 即可生效；若换成单文件挂载则必须 `up -d --force-recreate`（inode 坑）。
+
+**续期提醒**：免费 DV 只有 90 天。到期前可在腾讯云 SSL 控制台重新申请（DNS 验证会自动通过，因为域名已在 DNSPod），或后续上 `acme.sh` + DNSPod API 自动续。
 
 **根域 `324614917.xyz` 归 buddy**，网关的默认 server 块负责；别把它也指到工作台。
 
 **排查口诀**：先问权威服务器，别看面板。
-`nslookup -type=ns <域名> ns0.centralnic.net` —— 注册局自己有话说，面板只显示“提交成功”。
+- 是否直连：`nslookup my-workspace.324614917.xyz` 应回 `139.224.192.94`；若回 `104.21.x` / `172.67.x`，说明仍在走 CF 代理或本地缓存未过期。
+- 注册局怎么说：`curl https://rdap.centralnic.com/xyz/domain/324614917.xyz`（无缓存，比 DoH 可靠）。
+- 证书是否生效：`openssl s_client -connect 139.224.192.94:443 -servername my-workspace.324614917.xyz | openssl x509 -noout -issuer`，应显示 TrustAsia 而非自签。
+- DNSPod 显示「未使用云解析 DNS 地址」= 注册局 NS 与 DNSPod 分配的不一致；域名详情页悬停该状态可看到要求填写的 NS 对。
+
+**已下线（2026-11-07，经确认不再使用）**：`api.324614917.xyz`（CNAME → `jiese-checkin.pages.dev`，Cloudflare Pages 绑定随 zone 迁出而失效）、`izzy-happybirthday.324614917.xyz`（生日页）。
 
 ## 鉴权
 
@@ -146,6 +164,8 @@ docker tag workbench:prev workbench:latest && docker compose up -d
 
 ## 已知限制
 
-- 纯 HTTP，Basic Auth 凭据在链路上是 base64，只能防君子。域名与 ICP 备案到位后应加 443。
+- **源站 IP 直接暴露**，无 CDN/DDoS 防护（2026-11-07 起不再经 Cloudflare）。
+- **证书 90 天到期需续签**（免费 DV 的硬限制），到期不换浏览器会报错。见上「续期提醒」。
+- **未备案域名直连国内服务器**，严格说不合规；长期解是 ICP 备案 + 腾讯云 EdgeOne。
 - 单用户模型，没有账号体系；`data.json` 全量读写，多人并发会互相覆盖。
 - 端口 8090 依赖阿里云**轻量应用服务器**的「防火墙」（不是 ECS 安全组，这台机器是 SWAS）；换端口要同时改 `docker-compose.yml` 与控制台防火墙规则。当前已放行：80 / 443 / 22 / ICMP / 8090。
