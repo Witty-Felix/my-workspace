@@ -66,6 +66,9 @@ buddy 那侧的端口映射已改为 `127.0.0.1:8080:80`（在 `/home/bird/vbcd/
 
 **换机器或换 IP 时**：① 改 DNSPod 里 `my-workspace` 的 A 记录指向新 IP；② 在新机器上装 acme.sh 重签证书（域名不变，泛域名照旧，装法与坑见下）。两步都不影响此时仍在服役的旧机器。
 
+> **改完 A 记录还要等 TTL 过期**：该记录 TTL 是 600 秒（免费版最小档），改完最长 10 分钟内，终端依旧拿着旧 IP 访问——新记录对它们还没生效。2026-11-07 从 Cloudflare 切回源站直连时就踩过：记录早已指向源站，手机缓存里还是代理地址，首屏全黑 9 秒才出内容，10 分钟后自行恢复。
+> 验证：`nslookup -type=A my-workspace.324614917.xyz 223.5.5.5` 回新 IP，且服务器 `docker logs gateway --since 10m | grep my-workspace | awk '{print $1}'` 不再出现旧来源；手机开一次飞行模式再关，强制重解析后打开应 1 秒内上屏。
+
 源站证书：`/opt/gateway/certs/{fullchain,privkey}.pem`。当前为 **Let's Encrypt 泛域名**（`*.324614917.xyz` + `324614917.xyz`），由 **acme.sh 自动续期**，不需要人工介入。
 
 **签发与续期（已自动化，下面是原理与手工兜底）**
@@ -147,13 +150,21 @@ cd app && npm run deploy
 ## 排障
 
 ```bash
+# 先连上：部署密钥就是平时用的那把，deploy.sh 默认取它
+ssh -i ~/.ssh/wb_deploy_ed25519 root@139.224.192.94
+
 docker compose -f /opt/workbench/docker-compose.yml ps
 docker logs --tail 50 workbench
 docker inspect --format '{{.State.Health.Status}}' workbench
 curl -u joye:<密码> http://127.0.0.1:8090/api/health
+
+# 看用户实际走的哪条路（网关访问日志，格式定义在 deploy/gateway/conf.d/default.conf）
+docker logs --tail 200 gateway | grep my-workspace
 ```
 
 健康检查失败先看 `docker logs`；`AUTH_USER`/`AUTH_PASS` 任一为空容器会直接退出（fail-closed，这是有意的）。
+
+网关日志每行带 `"$host"` 和 `rt=`（单请求耗时）。首屏慢的时候先看 `rt=`——数值小说明后端没问题，慢在链路上；再看待打印的 `"$http_x_forwarded_for"` 是否还是中转服务商网段，那说明解析还没切到源站。
 
 ## 备份与恢复
 

@@ -10,6 +10,7 @@
 #   DEPLOY_KEY   部署密钥（默认 ~/.ssh/wb_deploy_ed25519）
 #   DEPLOY_PATH  服务器上的目标目录（默认 /opt/workbench）
 #   PUBLIC_URL   公网地址（默认 https://my-workspace.324614917.xyz/）
+#   PUBLIC_DOMAIN 域名（默认 my-workspace.324614917.xyz），自查 ④ 用它查公共 DNS
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +20,7 @@ HOST="${DEPLOY_HOST:-139.224.192.94}"
 KEY="${DEPLOY_KEY:-$HOME/.ssh/wb_deploy_ed25519}"
 REMOTE="${DEPLOY_PATH:-/opt/workbench}"
 PUBLIC="${PUBLIC_URL:-https://my-workspace.324614917.xyz/}"
+DOMAIN="${PUBLIC_DOMAIN:-my-workspace.324614917.xyz}"
 
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
@@ -60,7 +62,7 @@ run "cd $REMOTE && docker compose up -d --build 2>&1 | tail -15"
 run "cd $REMOTE && docker images workbench --format '{{.Tag}} {{.ID}} {{.CreatedSince}}' && docker ps --filter name=workbench --format '{{.Names}} {{.Status}} {{.Image}}'"
 
 echo
-echo "== 4. 自查三条 =="
+echo "== 4. 自查四条 =="
 # ① 容器里的文件必须与本机逐字节一致
 if [ "$DRY" -eq 0 ]; then
   for f in server.js lib/domain.js lib/store.js public/index.html public/app.js public/style.css; do
@@ -76,8 +78,29 @@ if [ "$DRY" -eq 0 ]; then
   $SSH "md5sum $REMOTE/data/data.json"
   # ③ 公网能拿到新内容
   $SSH "curl -s -o /dev/null -w '  公网 HTTP %{http_code}\n' $PUBLIC"
+  # ④ 公共 DNS 必须指向这台机器
+  #    ③ 是在服务器上 curl 自己的域名 —— 走的是服务器自己的解析，解析指到别处也照样 200。
+  #    真正决定用户快慢的是客户端解析，所以这里再查一次公共 DNS，并按 TTL 报出还要等多久。
+  #    2026-11-07 的 9 秒黑屏就是从这里漏过去的：记录已改直连，手机还缓存着代理地址。
+  #    --noproxy 是必须的：本机挂代理时，走代理查到的会是境外线路的答案，不是用户手机看到的。
+  dns_json="$(curl -s --noproxy '*' "https://dns.alidns.com/resolve?name=$DOMAIN&type=A" 2>/dev/null)"
+  dns_ip="$(printf '%s' "$dns_json" | grep -o '"data":"[0-9.]*"' | head -1 | cut -d'"' -f4)"
+  dns_ttl="$(printf '%s' "$dns_json" | grep -o '"TTL":[0-9]*' | head -1 | cut -d: -f2)"
+  if [ "$dns_ip" = "$HOST" ]; then
+    echo "  ✓ 国内解析指向 $dns_ip"
+  else
+    echo "  ⚠ 国内解析指向 ${dns_ip:-查不到}，不是这台机器 $HOST"
+    echo "    TTL ${dns_ttl:-600}s 内终端仍走旧地址，这段时间用户看到的是旧路径（可能是代理层，慢一个数量级）"
+    echo "    等 ${dns_ttl:-600} 秒后重查：curl -s --noproxy '*' 'https://dns.alidns.com/resolve?name=$DOMAIN&type=A'"
+  fi
+  # 境外线路单独看一眼：分线路记录只在国内查不出来，但它决定了在境外网络下的走法
+  dns_out="$(curl -s -m 6 "https://dns.alidns.com/resolve?name=$DOMAIN&type=A" 2>/dev/null \
+             | grep -o '"data":"[0-9.]*"' | head -1 | cut -d'"' -f4)"
+  if [ -n "$dns_out" ] && [ "$dns_out" != "$HOST" ]; then
+    echo "  ℹ 境外解析指向 $dns_out（与国内不是同一个地址，确认是否有意）"
+  fi
 else
-  echo "  [dry-run] 比对容器内 md5 / 数据指纹 / 公网 HTTP"
+  echo "  [dry-run] 比对容器内 md5 / 数据指纹 / 公网 HTTP / 公共 DNS"
 fi
 
 echo
