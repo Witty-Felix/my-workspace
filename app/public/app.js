@@ -194,11 +194,20 @@ function renderSlotPicker() {
 
 function makeCard(item, siblingsOf, idxForTilt = 0) {
   const card = document.createElement('article');
-  card.className = 'card ' + item.slot;
+  card.className = 'card ' + item.slot + (item.doneAt ? ' done' : '');
   card.tabIndex = 0;
   card.setAttribute('role', 'button');
-  card.setAttribute('aria-label', `${D.SLOT_LABELS[item.slot]} ${item.title}`);
+  card.setAttribute('aria-label', `${D.SLOT_LABELS[item.slot]} ${item.title}${item.doneAt ? '（已完成）' : ''}`);
   card.style.setProperty('--tilt', (idxForTilt % 2 ? .35 : -.3) + 'deg');
+
+  // 常驻的完成勾：常显（触屏没有 hover），点它只改完成状态，不碰排序与落位
+  const tick = document.createElement('button');
+  tick.type = 'button';
+  tick.className = 'tick';
+  tick.title = item.doneAt ? '取消完成' : '标记完成';
+  tick.setAttribute('aria-label', item.doneAt ? '取消完成' : '标记完成');
+  tick.addEventListener('click', (e) => { e.stopPropagation(); setDone(item, !item.doneAt); });
+  card.appendChild(tick);
 
   const sibs = siblingsOf(item);
   const idx = sibs.findIndex((x) => x.id === item.id);
@@ -254,6 +263,8 @@ function makeCard(item, siblingsOf, idxForTilt = 0) {
   };
   card.addEventListener('click', open);
   card.addEventListener('keydown', (e) => {
+    // 勾和排序钮自己处理键盘；冒泡上来的 Enter 不该顺带打开编辑框
+    if (e.target !== card) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
   });
 
@@ -495,6 +506,32 @@ async function move(item, dir) {
   }
 }
 
+// 写操作共用一个队列：落位和完成改的是同一份数据，串行发送才能保证
+// 后一次是照前一次改完的结果算的。失败统一 toast + 以服务端为准回滚。
+let writeQueue = Promise.resolve();
+function enqueueWrite(task) {
+  writeQueue = writeQueue.then(async () => {
+    try {
+      await task();
+    } catch (err) {
+      toast(err.message);
+      await refresh();
+    }
+  });
+}
+
+// 完成：先改界面再写服务端，失败以服务端为准回滚（同拖拽落位的原则）
+function setDone(item, done) {
+  if (done) item.doneAt = new Date().toISOString();
+  else delete item.doneAt;
+  render();
+
+  enqueueWrite(async () => {
+    await api(`/api/items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ done }) });
+    weekAhead.clear();   // 预取的前后两周里，这张卡的完成状态已经旧了
+  });
+}
+
 $('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!editState) return;
@@ -562,7 +599,6 @@ $('editor').addEventListener('click', (e) => {
 const FLIP_FIRST = 600;    // 贴边多久翻第一页
 const FLIP_REPEAT = 800;   // 之后每页的间隔，恒定不加速
 
-let placeQueue = Promise.resolve();
 let lastX = 0;
 let lastY = 0;
 let lastZone = null;
@@ -571,20 +607,15 @@ let edgeDir = 0;
 
 const isNarrow = () => window.matchMedia('(max-width:900px)').matches;
 
-// 串行发送：后一次的 index 是照前一次改完后的本地状态算的，
+// 落位走同一个写队列：后一次的 index 是照前一次改完后的本地状态算的，
 // 乱序到达会让服务端的顺序和眼前看到的不一致。
 function sendPlace(id, date, slot, index) {
-  placeQueue = placeQueue.then(async () => {
-    try {
-      await api(`/api/items/${id}/place`, {
-        method: 'POST',
-        body: JSON.stringify({ date, slot, index }),
-      });
-      weekAhead.clear();
-    } catch (err) {
-      toast(err.message);
-      await refresh();
-    }
+  enqueueWrite(async () => {
+    await api(`/api/items/${id}/place`, {
+      method: 'POST',
+      body: JSON.stringify({ date, slot, index }),
+    });
+    weekAhead.clear();
   });
 }
 
@@ -633,7 +664,7 @@ function hitTest(x, y) {
 document.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   const card = e.target.closest('.card');
-  if (!card || e.target.closest('.acts')) return;
+  if (!card || e.target.closest('.acts, .tick')) return;
   const item = itemOf.get(card);
   if (!item) return;
 
@@ -715,8 +746,7 @@ function startDrag() {
   drag.offsetY = drag.y0 - rect.top;
 
   const g = drag.card.cloneNode(true);
-  const acts = g.querySelector('.acts');
-  if (acts) acts.remove();
+  for (const n of g.querySelectorAll('.acts, .tick')) n.remove();
   g.className = drag.card.className + ' drag-ghost';
   g.style.left = rect.left + 'px';
   g.style.top = rect.top + 'px';

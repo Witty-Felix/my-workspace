@@ -114,11 +114,15 @@ app.patch('/api/items/:id', (req, res) => {
   if (b.date !== undefined && !isDate(b.date)) return res.status(400).json({ error: 'date 非法' });
   if (b.slot !== undefined && !SLOTS.includes(b.slot)) return res.status(400).json({ error: 'slot 非法' });
   if (b.title !== undefined && !cleanText(b.title, 80)) return res.status(400).json({ error: '标题不能为空' });
+  if (b.done !== undefined && typeof b.done !== 'boolean') return res.status(400).json({ error: 'done 需为布尔值' });
 
   if (b.title !== undefined) item.title = cleanText(b.title, 80);
   if (b.note !== undefined) item.note = cleanText(b.note, 500);
   if (b.slot !== undefined) item.slot = b.slot;
   if (b.date !== undefined) item.date = b.date;
+  // 完成只是一个时间戳：有就是已完成，没有就是未完成（不写 done:false，接口响应保持原样）
+  if (b.done === true && !item.doneAt) item.doneAt = new Date().toISOString();
+  if (b.done === false) delete item.doneAt;
   item.updatedAt = new Date().toISOString();
 
   const next = store.envelope(db.items);

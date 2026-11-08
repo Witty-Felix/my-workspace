@@ -545,7 +545,7 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   min-height:88px;
 }
 
-/* ============================ 日程卡 ============================ */
+/* ============================ 安排卡 ============================ */
 
 .card{
   position:relative;
@@ -609,10 +609,62 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   -webkit-box-orient:vertical;
 }
 
+/* 完成勾：常驻右上角（触屏没有 hover，不能藏）。命中区靠伪元素撑到 31px。
+   勾只表达「做完了」，不参与排序与落位 —— 已完成的卡照样能拖、能改。 */
+.card .tick{
+  position:absolute;
+  top:5px;right:5px;
+  z-index:2;
+  width:19px;height:19px;
+  display:grid;place-items:center;
+  padding:0;
+  background:var(--note);
+  border:1.7px solid var(--line);
+  border-radius:5px 6px 5px 6px;
+  cursor:pointer;
+  opacity:.55;
+  -webkit-tap-highlight-color:transparent;
+  transition:opacity 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+.card .tick::after{
+  content:"";
+  position:absolute;
+  inset:-6px;
+  border-radius:8px;
+}
+.card .tick::before{
+  content:"";
+  width:8px;height:4px;
+  border-left:2px solid var(--note);
+  border-bottom:2px solid var(--note);
+  transform:rotate(-45deg) translate(1px,-1px);
+  filter:url(#sketchy-k);
+  opacity:0;
+}
+.card:hover .tick,
+.card:focus-within .tick{opacity:1}
+.card.done .tick{
+  background:var(--ink-2);
+  border-color:var(--ink-2);
+  opacity:1;
+}
+.card.done .tick::before{opacity:1}
+
+/* 完成态：只褪墨 + 划线，不动布局 */
+.card.done .title{
+  color:var(--ink-2);
+  text-decoration:line-through;
+  text-decoration-thickness:1.5px;
+  text-decoration-color:var(--ink-2);
+  text-decoration-skip-ink:none;
+}
+.card.done .note{color:var(--ink-3)}
+.card.done .meta{color:var(--ink-3)}
+
 .acts{
   position:absolute;
   top:4px;
-  right:5px;
+  right:27px;   /* 给右上角的完成勾让位 */
   display:flex;
   gap:1px;
   opacity:0;
@@ -934,17 +986,17 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   .phone{display:flex;flex-direction:column;flex:1;min-height:0}
   .phone-paper{flex:1}
 
-  /* 卡片：文字在左，排序钮收成右侧一条竖列，用虚线隔开 */
+  /* 卡片：文字在左，排序钮收成右侧一条竖列，用虚线隔开；最右再留出完成勾 */
   .card{
     display:flex;
     flex-direction:column;
     justify-content:center;
     min-height:48px;
-    padding:9px 44px 10px 11px;
+    padding:9px 64px 10px 11px;
     transform:none;
   }
   .card .meta{display:none}
-  .card.solo{padding-right:12px}
+  .card.solo{padding-right:34px}
   .card .title{font-size:15.5px;-webkit-line-clamp:2}
   .card .note{
     display:-webkit-box;
@@ -954,7 +1006,7 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   .acts{
     position:absolute;
     top:50%;
-    right:0;
+    right:27px;
     transform:translateY(-50%);
     flex-direction:column;
     gap:4px;

@@ -1,0 +1,27 @@
+@@ -114,6 +114,8 @@
+ </div>
+ <div class="stack">
+ <article class="card am solo" tabindex="0" role="button" aria-label="上午 夹具甲" style="--tilt: -0.3deg;">
++<button type="button" class="tick" title="标记完成" aria-label="标记完成">
++</button>
+ <div class="meta">
+ <i class="sdot">
+ </i>上午</div>
+@@ -121,6 +123,8 @@
+ <p class="note">上午</p>
+ </article>
+ <article class="card pm solo" tabindex="0" role="button" aria-label="下午 夹具乙" style="--tilt: 0.35deg;">
++<button type="button" class="tick" title="标记完成" aria-label="标记完成">
++</button>
+ <div class="meta">
+ <i class="sdot">
+ </i>下午</div>
+@@ -137,6 +141,8 @@
+ </div>
+ <div class="stack">
+ <article class="card eve solo" tabindex="0" role="button" aria-label="晚上 夹具丙" style="--tilt: -0.3deg;">
++<button type="button" class="tick" title="标记完成" aria-label="标记完成">
++</button>
+ <div class="meta">
+ <i class="sdot">
+ </i>晚上</div>

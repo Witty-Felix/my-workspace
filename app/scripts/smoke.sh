@@ -23,6 +23,23 @@ bad() { printf '  ✗ %s\n' "$*"; fail=1; }
 ok()  { printf '  ✓ %s\n' "$*"; }
 skip() { printf '  – %s\n' "$*"; }
 
+# 有意变更的基线：diff 正文（去掉带时间戳与路径的文件头）与 scripts/*-accepted.diff
+# 逐字相同就放行；SMOKE_ACCEPT=1 时把当前正文写成新基线 —— 那次提交里就能看见「基线变了什么」。
+accept_diff() { # $1=diff 文件  $2=基线文件  $3=名字
+  local body
+  body="$(tail -n +3 "$1")"
+  if [ -f "$2" ] && [ "$body" = "$(cat "$2")" ]; then
+    ok "$3 的变更是已接受的基线（见 ${2#"$ROOT"/}）"
+    return 0
+  fi
+  if [ "${SMOKE_ACCEPT:-0}" = "1" ]; then
+    printf '%s\n' "$body" > "$2"
+    ok "$3 的新基线已写入 ${2#"$ROOT"/}（记得随代码一起提交）"
+    return 0
+  fi
+  return 1
+}
+
 cleanup() {
   for p in $OLD_PID $NEW_PID $MOCK_PID; do
     [ -n "${p:-}" ] && kill "$p" 2>/dev/null
@@ -78,6 +95,8 @@ node "$HERE/lib/contract.js" "http://127.0.0.1:$OLD_PORT" > "$SCRATCH/seq-old.tx
 node "$HERE/lib/contract.js" "http://127.0.0.1:$NEW_PORT" > "$SCRATCH/seq-new.txt" 2>&1
 if diff -u "$SCRATCH/seq-old.txt" "$SCRATCH/seq-new.txt" > "$SCRATCH/seq.diff"; then
   ok "接口契约逐字一致（$(wc -l < "$SCRATCH/seq-new.txt") 条调用）"
+elif accept_diff "$SCRATCH/seq.diff" "$APP/scripts/contract-accepted.diff" "接口契约"; then
+  :
 else
   bad "接口契约变了"; head -30 "$SCRATCH/seq.diff" | sed 's/^/      /'
 fi
@@ -112,6 +131,8 @@ else
   dump "http://127.0.0.1:$NEW_PORT/" > "$SCRATCH/dom-new.txt"
   if diff -u "$SCRATCH/dom-old.txt" "$SCRATCH/dom-new.txt" > "$SCRATCH/dom.diff"; then
     ok "DOM 归一化后一致（日列 $(grep -c 'class="day[ "]' "$SCRATCH/dom-new.txt") / 卡片 $(grep -c 'class="card[ "]' "$SCRATCH/dom-new.txt")）"
+  elif accept_diff "$SCRATCH/dom.diff" "$APP/scripts/dom-accepted.diff" "渲染结果"; then
+    :
   else
     bad "DOM 变了"; head -30 "$SCRATCH/dom.diff" | sed 's/^/      /'
   fi

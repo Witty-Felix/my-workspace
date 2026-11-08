@@ -67,5 +67,20 @@ else
 fi
 
 echo
+echo "== 5. 词表禁词（手写黑名单，不解析 GLOSSARY）=="
+# _Avoid_ 里混着「周」「week」这类常用词，解析词表会误报；这里只盯几个
+# 一定不该出现在代码与界面文案里的词。
+banned='看板|待办|日程|投放位|drop zone'
+hits="$(grep -rnE "$banned" --include='*.js' --include='*.html' --include='*.css' \
+  --exclude-dir=node_modules --exclude-dir=data --exclude-dir=.smoke \
+  --exclude-dir=.drag-smoke --exclude-dir=.done-smoke . 2>/dev/null || true)"
+if [ -n "$hits" ]; then
+  bad "出现词表禁词："
+  printf '%s\n' "$hits" | head -10 | sed 's/^/      /'
+else
+  ok "没有词表禁词"
+fi
+
+echo
 if [ "$fail" -ne 0 ]; then echo "✗ check 未通过"; exit 1; fi
 echo "✓ check 全部通过"

@@ -11,7 +11,8 @@
     "adr": "bash scripts/check-adr.sh",
     "docs": "bash scripts/check-docs.sh",
     "deploy": "bash scripts/deploy.sh",
-    "smoke:drag": "node scripts/smoke-drag.mjs"
+    "smoke:drag": "node scripts/smoke-drag.mjs",
+    "smoke:done": "node scripts/smoke-done.mjs"
   },
   "dependencies": {
     "express": "^4.19.2"
