@@ -37,3 +37,19 @@ date: 2026-11-07
 配套：`scripts/smoke-drag.mjs` 增加触屏档（移动视口 + `Input.dispatchTouchEvent`）。原先它只发鼠标事件，所以「鼠标能拖」一直被当成「能拖」。
 
 实现：`public/app.js` 的「拖拽落位」段（`bandsFor` / `buildZones` / `hitTest` / `startDrag`）；自检：`npm run smoke:drag`（鼠标档 + 触屏档）。
+
+## 修订（2026-11-09 晚）：投放格改回流内三格，触屏安全改由「固定锚点」保证
+
+真机复测推翻了上一条修订的核心假设。上一版把 pointercancel 归因于「指针捕获位置」，于是改用覆盖层让列表零重排；但真机继续测出「拖到下一天突然消失」——真正的根因是：**触屏的 touch 序列绑定在 `pointerdown` 时的目标卡片节点上，任何时刻把该节点从 DOM 摘除（重建列表必然摘除它），浏览器都会派发 `pointercancel`**。覆盖层只是让「拖拽起点」不重建，可贴边翻天之后 `refresh()` 仍会重建列表，原卡照样被杀。`setPointerCapture(body)` 救不了它——捕获只改事件路由，不改 touch 目标的生死判定。
+
+**解法：把「原卡不能死」和「列表要重排」解耦。** 拿起瞬间把原卡从列表摘出、挂到 `body` 直属的固定锚点（`.drag-anchor`，`visibility:hidden` 视觉全隐）；此后列表/翻页/翻天随便重建，touch 目标永生。锚点随 `endDrag` 删除，`render()` 按数据把卡画到新位置。
+
+投放格同时改回流内三格（ADR 初版的方案）：拖拽态每天列/手机列表直接铺开上午/下午/晚上三个方框，卡片住自己时段的框，空档也留位——真机用户反馈覆盖层「按卡片上下沿」算出的格子与卡片错位（空档小格挤在卡片缝里）、格子太小、空天没格子。流内三格下：桌面拖拽态纸面拉高（`min-height:640px`）、手机当天列表撑满视口（`.phone-paper.stretch`），三格 `flex:1 1 0` 均分列高；静止态 DOM 仍然零改动，smoke 基线照旧逐字一致。
+
+Consequences 变化：
+- 「拖拽期间零重排」作废——拖拽态列表每次都重排，但重排不再威胁拖拽本身（原卡在锚点里）。
+- 被拖的卡从渲染池排除：拖拽中它在列表里 0 次出现，唯一可见形态是跟手影子（防残影）。
+- 覆盖层机器（`bandsFor`/`buildZones`/`zoneAt`/`zone-layer`/`.drag-src`）整体删除；格子高亮直接 `elementFromPoint` 命中流内 `.zone`。
+- 「一天只剩一条安排时格子挤在纸面下半段」的代价作废——流内三格按列高均分，纸面拉高后每格 ≈180px。
+
+实现：`public/app.js`「拖拽落位」段（`zoneEl`/`hitTest`/`startDrag`/`endDrag`）；自检：`npm run smoke:drag`（鼠标档 + 触屏档，选择器已随流内格子更新）。

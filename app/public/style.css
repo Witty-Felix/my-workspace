@@ -1136,37 +1136,47 @@ body.busy::before{opacity:1;width:72%}
 body.busy .stage{opacity:.5;pointer-events:none}
 
 /* ============================ 拖拽落位 ============================
-   投放格只在拖拽期间存在，是盖在页面上的一层（fixed），位置照原卡片算：
-   列表本身不重排，纸不长高，整页也不跳。
+   拖拽态渲染流内三格（.zone）：每天列铺开上午/下午/晚上三个方框，卡片住自己
+   时段的框，空档也留位；桌面把纸拉高、手机把当天列表撑满视口，格子不挤。
+   触屏安全靠固定锚点：原卡摘离列表挂 body 直属容器（视觉全隐），touch 序列的
+   目标节点永不销毁，翻页/翻天随便重建。
    ↑↓ 只是把字形换成 CSS 箭头，文字节点留着给读屏软件。
-   两者都只在交互中出现，所以渲染比对（scripts/smoke.sh）拿旧基线仍然逐字一致。 */
+   静止态 DOM 与三格上线前完全一致（三格只在拖拽态渲染）。 */
 
-.zone-layer{
-  position:fixed;
-  inset:0;
-  z-index:120;
-  pointer-events:none;
+.stack.dropping,
+.phone-list.dropping{
+  gap:7px;
 }
 
-.zone-layer .zone{
-  position:absolute;
+.zone{
+  position:relative;
   display:flex;
-  align-items:center;
-  justify-content:center;
-  padding:0 6px;
+  flex-direction:column;
+  gap:6px;
+  flex:1 1 0;
+  min-height:64px;
+  padding:20px 4px 6px;
   border:2px dashed rgba(26,26,24,.13);
-  border-radius:10px 12px 10px 12px;
+  border-radius:12px 14px 12px 14px;
   transition:background-color 120ms ease, border-color 120ms ease;
 }
-[data-theme="dark"] .zone-layer .zone{border-color:rgba(237,232,214,.16)}
+[data-theme="dark"] .zone{border-color:rgba(237,232,214,.16)}
+/* 手机三格更高：手指好落 */
+.phone-list .zone{min-height:96px;padding:22px 8px 8px}
 
-.zone-layer .zone-lab{
+.zone-lab{
+  position:absolute;
+  top:4px;left:7px;
   font-family:var(--font-display);
   font-size:10px;
   letter-spacing:.16em;
   color:var(--ink-3);
+  pointer-events:none;
   transition:color 120ms ease;
 }
+
+/* 格内卡片归位：不歪斜 */
+.zone .card{transform:none}
 
 .zone.on{border-color:var(--line)}
 .zone.on .zone-lab{color:var(--ink)}
@@ -1174,14 +1184,46 @@ body.busy .stage{opacity:.5;pointer-events:none}
 .zone.on.z-pm{background:rgba(208,124,66,.13)}
 .zone.on.z-eve{background:rgba(124,116,188,.14)}
 
+/* 桌面：拖拽态整周纸面拉高，空周的三格也有大地方住 */
+@media (min-width:901px){
+  body.dragging .sheet{min-height:640px}
+  body.dragging .day{height:100%}
+  body.dragging .stack{flex:1 1 auto}
+}
+
+/* 手机：拖拽态当天列表撑满视口剩余高度（空天也有三格大框）。
+   .phone-paper 平时按内容长；stretch 让它变成纵向 flex 并撑高，
+   列表才能吃掉剩余高度传给三个格子。格子保底 72px，纸再矮也不塌。 */
+.phone-paper.stretch{
+  display:flex;
+  flex-direction:column;
+  min-height:calc(100dvh - 220px);
+}
+.phone-list.dropping{flex:1 1 auto}
+.phone-list.dropping .zone{flex:1 1 0;min-height:72px}
+
 body.dragging{
   cursor:grabbing;
   user-select:none;
   -webkit-user-select:none;
 }
 body.dragging .card{cursor:grabbing;pointer-events:none}
-/* 被拖的那张留在原位，只褪墨：摘走会带动整列重排 */
-.drag-src{opacity:.32}
+
+/* 被拿起的原卡：摘离列表挂到固定锚点，视觉全隐 ——
+   touch 序列绑在它身上不能销毁，翻页重建列表也杀不到它 */
+.drag-anchor{
+  position:fixed;
+  left:0;top:0;
+  z-index:190;
+  pointer-events:none;
+  margin:0;
+  visibility:hidden;
+}
+.drag-anchor .card{
+  margin:0;
+  transform:none;
+  pointer-events:none;
+}
 
 .drag-ghost{
   position:fixed;

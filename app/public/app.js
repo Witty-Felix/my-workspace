@@ -34,12 +34,10 @@ let items = [];
 let phoneDate = TODAY;
 let editState = null;
 
-// 拖拽状态。投放格是拖拽期间才盖上去的一层，静止态 DOM 与拖拽上线前完全一致
+// 拖拽状态。投放格是拖拽期间才存在的一组流内方框（.zone），静止态没有它们
 let drag = null;
 let lastDropAt = 0;
-let zoneLayer = null;   // 覆盖层容器：拖拽期间才存在
-let zoneList = [];     // 覆盖层里的投放格，位置照原卡片算
-let hotZone = null;     // 当前高亮的那一格
+let hotZone = null;    // 当前高亮的那一格
 // 卡片 DOM → 安排对象：拖拽要认卡，但不往 DOM 里加属性（静止态要和服务端渲染的基线逐字一致）
 const itemOf = new WeakMap();
 // 拖拽起手时预取前后两周，翻周不必等跨境往返；一次即弃，写操作后清空
@@ -198,8 +196,6 @@ function makeCard(item, siblingsOf, idxForTilt = 0) {
   card.setAttribute('role', 'button');
   card.setAttribute('aria-label', `${D.SLOT_LABELS[item.slot]} ${item.title}${item.doneAt ? '（已完成）' : ''}`);
   card.style.setProperty('--tilt', (idxForTilt % 2 ? .35 : -.3) + 'deg');
-  // 拖拽中的那张卡留在原位，只把墨褪掉 —— 摘走会带动整列重排，纸跟着长高
-  if (drag && drag.item.id === item.id) card.classList.add('drag-src');
 
   // 常驻的完成勾：常显（触屏没有 hover），点它只改完成状态，不碰排序与落位
   const tick = document.createElement('button');
@@ -283,7 +279,8 @@ function renderHeader() {
 function renderWeek() {
   const week = $('week');
   week.textContent = '';
-  const pool = items;
+  // 拖拽中：被拖的那张卡只以跟手影子存在，列表里绝不渲染（否则就是残影）
+  const pool = (drag && drag.active) ? items.filter((x) => x.id !== drag.item.id) : items;
   const siblingsOf = siblingsFn(pool);
 
   for (let i = 0; i < 7; i++) {
@@ -313,27 +310,44 @@ function renderWeek() {
     day.appendChild(head);
 
     const stack = document.createElement('div');
-    stack.className = 'stack';
-    list.forEach((it, k) => stack.appendChild(makeCard(it, siblingsOf, k)));
+    stack.className = 'stack' + (drag && drag.active ? ' dropping' : '');
 
-    if (!list.length) {
-      const hint = document.createElement('p');
-      hint.className = 'empty';
-      hint.textContent = '空着';
-      stack.appendChild(hint);
+    if (drag && drag.active) {
+      // 拖拽态：每天铺开上午/下午/晚上三个流内方框，卡片住自己时段的框，空档也留位
+      for (const slot of D.SLOTS) {
+        stack.appendChild(zoneEl(key, slot, list.filter((it) => it.slot === slot), siblingsOf));
+      }
+    } else {
+      list.forEach((it, k) => stack.appendChild(makeCard(it, siblingsOf, k)));
+
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'add';
+      add.textContent = '＋';
+      add.title = `在 ${monthDay(date)} 添加安排`;
+      add.addEventListener('click', () => openEditor(key, null));
+      stack.appendChild(add);
     }
-
-    const add = document.createElement('button');
-    add.type = 'button';
-    add.className = 'add';
-    add.textContent = '＋';
-    add.title = `在 ${monthDay(date)} 添加安排`;
-    add.addEventListener('click', () => openEditor(key, null));
-    stack.appendChild(add);
 
     day.appendChild(stack);
     week.appendChild(day);
   }
+}
+
+// 拖拽态的流内方框：一个时段一个框，卡片住框里
+function zoneEl(date, slot, list, siblingsOf) {
+  const z = document.createElement('div');
+  z.className = 'zone z-' + slot;
+  z.dataset.date = date;
+  z.dataset.slot = slot;
+
+  const lab = document.createElement('span');
+  lab.className = 'zone-lab';
+  lab.textContent = D.SLOT_LABELS[slot];
+  z.appendChild(lab);
+
+  list.forEach((it) => z.appendChild(makeCard(it, siblingsOf)));
+  return z;
 }
 
 function renderPhone() {
@@ -360,29 +374,31 @@ function renderPhone() {
 
   const list = $('pList');
   list.textContent = '';
+  list.className = 'phone-list' + (drag && drag.active ? ' dropping' : '');
 
-  const pool = items;
+  // 拖拽中：被拖的那张卡只以跟手影子存在，列表里绝不渲染
+  const pool = (drag && drag.active) ? items.filter((x) => x.id !== drag.item.id) : items;
   const dayItems = pool.filter((it) => it.date === phoneDate).sort(D.compareArrangements);
   const siblingsOf = siblingsFn(pool);
 
-  if (!dayItems.length) {
-    const empty = document.createElement('p');
-    empty.className = 'empty';
-    empty.textContent = '这天还没排';
-    list.appendChild(empty);
-  } else {
-    let lastSlot = null;
-    for (const it of dayItems) {
-      if (it.slot !== lastSlot) {
-        const h = document.createElement('div');
-        h.className = 'slot-head';
-        h.dataset.slot = it.slot;
-        h.textContent = D.SLOT_LABELS[it.slot];
-        list.appendChild(h);
-        lastSlot = it.slot;
-      }
-      list.appendChild(makeCard(it, siblingsOf));
+  if (drag && drag.active) {
+    for (const slot of D.SLOTS) {
+      list.appendChild(zoneEl(phoneDate, slot, dayItems.filter((it) => it.slot === slot), siblingsOf));
     }
+    return;
+  }
+
+  let lastSlot = null;
+  for (const it of dayItems) {
+    if (it.slot !== lastSlot) {
+      const h = document.createElement('div');
+      h.className = 'slot-head';
+      h.dataset.slot = it.slot;
+      h.textContent = D.SLOT_LABELS[it.slot];
+      list.appendChild(h);
+      lastSlot = it.slot;
+    }
+    list.appendChild(makeCard(it, siblingsOf));
   }
 
   const add = document.createElement('button');
@@ -423,8 +439,8 @@ function render() {
   renderHeader();
   renderWeek();
   renderPhone();
-  // 翻周/翻天会重建卡片，投放格得照新位置重算
-  if (drag && drag.active) buildZones();
+  // 翻周/翻天重建列表后，之前高亮的格子节点已不存在
+  if (drag && drag.active) clearHotZone();
 }
 
 /* ---------------- 编辑 ---------------- */
@@ -582,7 +598,10 @@ $('editor').addEventListener('click', (e) => {
 
 /* ---------------- 拖拽落位 ----------------
    Pointer Events 一套走鼠标、触屏、触控笔。落点决定时段，没有「非法落点」。
-   投放格是拖拽期间盖上去的一层，位置照原卡片算：列表不动，纸不长高，页不跳。
+   拖拽态渲染流内三格（.zone）：每天列铺开上午/下午/晚上三个方框，卡片住自己
+   时段的框，空档也留位；桌面把纸拉高、手机把当天列表撑满视口，格子不挤。
+   触屏安全：拿起瞬间把原卡摘出列表、挂到 body 直属的固定锚点（视觉全隐）——
+   touch 序列绑定在原卡节点上，列表怎么重建它都活着，翻页/翻天不再 pointercancel。
    松手先改界面再写服务端：跨境一来一回一两秒，等确认再动就像卡死。 */
 
 const FLIP_FIRST = 600;    // 贴边多久翻第一页
@@ -620,113 +639,8 @@ function prefetchWeeks() {
   }
 }
 
-/* 投放格按原卡片的位置算：有卡的时段占它自己那几张卡的上下沿，空段插在邻居之间。
-   卡片不动，落点照样一眼可见。 */
-function bandsFor(date, box, cardEls, out) {
-  const boxRect = box.getBoundingClientRect();
-  const left = boxRect.left + 2;
-  const width = Math.max(24, boxRect.width - 4);
-  const top = boxRect.top + 4;
-  // 只剩一条安排时，三格会挤成一条缝；至少给每格一个指头的高度（不够就盖到纸外）
-  const bottom = Math.max(boxRect.bottom - 4, Math.min(window.innerHeight - 8, top + 3 * 46));
-
-  const filled = [];
-  for (const s of D.SLOTS) {
-    const cards = [...cardEls].filter((el) => { const it = itemOf.get(el); return it && it.slot === s; });
-    if (!cards.length) continue;
-    const a = cards[0].getBoundingClientRect();
-    const b = cards[cards.length - 1].getBoundingClientRect();
-    filled.push({ slot: s, i: D.SLOTS.indexOf(s), top: a.top - 2, bottom: b.bottom + 2 });
-  }
-
-  if (!filled.length) {
-    const h = (bottom - top) / 3;
-    D.SLOTS.forEach((s, i) => out.push({ date, slot: s, left, width, top: top + i * h, height: Math.max(24, h - 3) }));
-    return;
-  }
-
-  // 连续的几个空时段凑成一组、把剩余空间均分；不然它们会全叠在同一段空隙里
-  const GAP = 6;
-  const at = new Map(filled.map((f) => [f.slot, f]));
-  let cursor = top;
-  let i = 0;
-  while (i < D.SLOTS.length) {
-    const hit = at.get(D.SLOTS[i]);
-    if (hit) {
-      out.push({ date, slot: D.SLOTS[i], left, width, top: hit.top, height: hit.bottom - hit.top });
-      cursor = hit.bottom + GAP;
-      i++;
-      continue;
-    }
-    let j = i;
-    while (j < D.SLOTS.length && !at.has(D.SLOTS[j])) j++;
-    const next = j < D.SLOTS.length ? at.get(D.SLOTS[j]) : null;
-    const gBottom = next ? next.top - 4 : bottom;
-    const n = j - i;
-    const span = Math.max(0, gBottom - cursor);
-    // 命中区不小于 24px：手指落得住，比「不超出纸面」重要
-    const h = Math.max(24, Math.min(44, (span - (n - 1) * GAP) / n));
-    let t = cursor + Math.max(0, (span - (h * n + (n - 1) * GAP)) / 2);
-    for (let k = i; k < j; k++) {
-      out.push({ date, slot: D.SLOTS[k], left, width, top: t, height: h });
-      t += h + GAP;
-    }
-    cursor = t;
-    i = j;
-  }
-}
-
-function buildZones() {
-  clearZones();
-  const bands = [];
-  if (isNarrow()) {
-    const list = $('pList');
-    bandsFor(phoneDate, list, list.querySelectorAll('.card'), bands);
-  } else {
-    for (const day of $('week').querySelectorAll('.day')) {
-      const stack = day.querySelector('.stack');
-      bandsFor(day.dataset.date, stack, stack.querySelectorAll('.card'), bands);
-    }
-  }
-
-  zoneLayer = document.createElement('div');
-  zoneLayer.className = 'zone-layer';
-  for (const b of bands) {
-    const el = document.createElement('div');
-    el.className = 'zone z-' + b.slot;
-    el.dataset.date = b.date;
-    el.dataset.slot = b.slot;
-    el.style.left = b.left + 'px';
-    el.style.top = b.top + 'px';
-    el.style.width = b.width + 'px';
-    el.style.height = b.height + 'px';
-    const lab = document.createElement('span');
-    lab.className = 'zone-lab';
-    lab.textContent = D.SLOT_LABELS[b.slot];
-    el.appendChild(lab);
-    zoneLayer.appendChild(el);
-    zoneList.push({ date: b.date, slot: b.slot, el, left: b.left, top: b.top, width: b.width, height: b.height });
-  }
-  document.body.appendChild(zoneLayer);
-}
-
-function clearZones() {
-  if (zoneLayer) zoneLayer.remove();
-  zoneLayer = null;
-  zoneList = [];
-  hotZone = null;
-}
-
-// 取包含手指的那一格；两格重叠时取离手指中心更近的一格
-function zoneAt(x, y) {
-  let best = null;
-  let bestGap = Infinity;
-  for (const z of zoneList) {
-    if (x < z.left || x > z.left + z.width || y < z.top || y > z.top + z.height) continue;
-    const gap = Math.abs(y - (z.top + z.height / 2));
-    if (gap < bestGap) { bestGap = gap; best = z; }
-  }
-  return best;
+function clearHotZone() {
+  if (hotZone) { hotZone.classList.remove('on'); hotZone = null; }
 }
 
 // 落在某张卡上半＝插它前面，下半＝插它后面；只数同一天同一时段的卡
@@ -743,8 +657,8 @@ function indexIn(date, slot, y) {
   return n;
 }
 
-/* 只判「落在哪」，不算位次：位次要量每张卡的矩形，放到 pointermove 里会一直触发重排。
-   命中投放格时 zone 非空，松手那一下再按 y 算 index；落在周条上时 index 直接给出。 */
+/* 只判「落在哪」，不算位次：位次交给 indexIn 在松手时算。
+   流内三格直接用 elementFromPoint 命中 .zone；落在周条上时 index 直接给出。 */
 function hitTest(x, y) {
   if (!drag) return null;
   const el = document.elementFromPoint(x, y);
@@ -761,9 +675,9 @@ function hitTest(x, y) {
     }
   }
 
-  const z = zoneAt(x, y);
+  const z = el && el.closest('.zone');
   if (!z) return null;
-  return { date: z.date, slot: z.slot, zone: z };
+  return { date: z.dataset.date, slot: z.dataset.slot, zone: z };
 }
 
 document.addEventListener('pointerdown', (e) => {
@@ -843,11 +757,7 @@ document.addEventListener('pointercancel', (e) => {
 document.addEventListener('pointerleave', () => { if (drag && drag.active) stopEdge(); });
 window.addEventListener('blur', stopEdge);
 
-// 拖拽期间页面还是可能被滚走（滚轮、第二根手指），格子得跟着卡片重算
-const refitZones = () => { if (drag && drag.active) buildZones(); };
-window.addEventListener('scroll', refitZones, { passive: true });
-window.addEventListener('resize', refitZones);
-
+// 拖拽期间页面还是可能被滚走（滚轮、第二根手指）——流内三格随文档流走，无需重算
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && drag && drag.active) endDrag();
 });
@@ -871,22 +781,35 @@ function startDrag() {
   document.body.appendChild(g);
   drag.ghost = g;
 
-  drag.card.classList.add('drag-src');
+  // 原卡摘离列表，挂到 body 直属的固定锚点（视觉全隐）。
+  // touch 序列绑定在原卡节点上：列表随翻页重建时它若还在列表里就会被销毁，
+  // 浏览器随即 pointercancel（真机实测）。脱离列表后翻页/翻天随便重建。
+  // 流内三格的格子自身恒定占位，无需额外占位符。
+  const anchor = document.createElement('div');
+  anchor.className = 'drag-anchor';
+  document.body.appendChild(anchor);
+  anchor.appendChild(drag.card);
+  drag.anchor = anchor;
+
   document.body.classList.add('dragging');
+  // 手机：拖拽态当天列表撑满视口，空天也有三格大框
+  if (isNarrow()) document.querySelector('.phone-paper')?.classList.add('stretch');
   prefetchWeeks();
-  buildZones();
+  render();
 }
 
 function endDrag() {
   if (drag && drag.ghost) drag.ghost.remove();
+  if (drag && drag.anchor) drag.anchor.remove();
   if (drag) {
     clearTimeout(drag.timer);
     try { document.body.releasePointerCapture(drag.pointerId); } catch (_) {}
   }
   drag = null;
-  clearZones();
+  clearHotZone();
   stopEdge();
   document.body.classList.remove('dragging');
+  document.querySelector('.phone-paper')?.classList.remove('stretch');
   render();
 }
 
@@ -894,8 +817,8 @@ function highlight(x, y) {
   const t = hitTest(x, y);
   const z = t ? t.zone : null;
   if (z === hotZone) return;
-  if (hotZone) hotZone.el.classList.remove('on');
-  if (z) z.el.classList.add('on');
+  if (hotZone) hotZone.classList.remove('on');
+  if (z) z.classList.add('on');
   hotZone = z;
 }
 

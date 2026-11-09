@@ -275,7 +275,7 @@ try {
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   })()`);
   const atZone = (slot) => js(`(() => {
-    const z = document.querySelector('.zone-layer .zone[data-slot="${slot}"]');
+    const z = document.querySelector('.phone-list.dropping .zone[data-slot="${slot}"]');
     if (!z) return null;
     const r = z.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height * 0.6 };
@@ -301,16 +301,16 @@ try {
     await touch('touchMove', src.x, src.y + 6);
     await sleep(80);
     const ghost = await js(`document.querySelectorAll('.drag-ghost').length`);
-    const zones = await js(`document.querySelectorAll('.zone-layer .zone').length`);
+    const zones = await js(`document.querySelectorAll('.phone-list.dropping .zone').length`);
     if (ghost === 1 && zones === 3) ok('触屏：长按拿起 → 三格铺开');
     else fail(`触屏：长按后 ghost=${ghost} 投放格=${zones}`);
 
     const pm = await atZone('pm');
     if (!pm) { await touch('touchCancel', 0, 0); fail('触屏：下午格没找到'); }
     else {
-      // 落在「触屏乙」上半 → 位次 0，应该插到它前面
-      const above = await atCard('触屏乙');
-      const target = above ? { x: above.x, y: above.y - 14 } : pm;
+      // 流内三格：拖拽态列表重排过，静止态卡坐标已失效，直接落 pm 格上半（位次 0）
+      const pmRect = await js(`(() => { const z = document.querySelector('.phone-list.dropping .zone[data-slot="pm"]'); const r = z.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height * 0.25 }; })()`);
+      const target = pmRect || pm;
       await touch('touchMove', target.x, target.y);
       await sleep(100);
       await touch('touchEnd', 0, 0);
@@ -322,7 +322,7 @@ try {
       else fail(`触屏落点不对：${jia?.date} ${jia?.slot}`);
       if (jia && yi && jia.order < yi.order) ok('触屏：落在卡片上半 → 位次插到前面');
       else fail(`触屏位次不对：甲=${jia?.order} 乙=${yi?.order}`);
-      const rest = await js(`document.querySelectorAll('.drag-ghost, .zone-layer').length`);
+      const rest = await js(`document.querySelectorAll('.drag-ghost, .drag-anchor').length`);
       if (rest === 0) ok('触屏：松手后不留残影');
       else fail(`触屏：松手后还剩 ${rest} 个节点`);
     }
@@ -336,9 +336,59 @@ try {
       await sleep(80);
       await touch('touchCancel', 0, 0);
       await sleep(400);
-      const left = await js(`document.querySelectorAll('.drag-ghost, .zone-layer').length`);
+      const left = await js(`document.querySelectorAll('.drag-ghost, .drag-anchor').length`);
       if (left === 0) ok('触屏：拖拽被打断后回到静止态');
       else fail(`触屏：打断后残留 ${left} 个节点`);
+    }
+
+    // 触屏安全的核心断言：翻页后 touch 序列必须仍存活。
+    // touch 目标是 pointerdown 时的原卡节点——列表一重建它就死、浏览器就 pointercancel。
+    // 现方案把原卡摘离列表挂到 body 直属锚点，翻页/翻天随便重建。
+    // 手势纪律：大跨度移动用插值小步（瞬移 touchMove 会触发浏览器手势判定）。
+    console.log('== 手机：触屏翻页后拖拽存活 ==');
+    const t3 = await atCard('触屏乙');
+    if (!t3) fail('存活测试没卡可拖');
+    else {
+      const day0 = await js(`document.getElementById('pDay').textContent`);
+      await touch('touchStart', t3.x, t3.y);
+      await sleep(380);
+      await touch('touchMove', t3.x + 4, t3.y + 3);
+      await sleep(60);
+      // 插值滑到右缘（34px 内）等连拍翻天
+      for (let k = 1; k <= 10; k++) {
+        await touch('touchMove', t3.x + 4 + (389 - t3.x - 4) * (k / 10), t3.y + 3 + (400 - t3.y - 3) * (k / 10));
+        await sleep(30);
+      }
+      await sleep(700);
+      const day1 = await js(`document.getElementById('pDay').textContent`);
+      // 手指不抬，从边缘移回纸面中央的晚上格落位——翻页后序列还活着就落得进去
+      const eve = await js(`(() => {
+        const z = document.querySelector('.phone-list.dropping .zone[data-slot="eve"]');
+        if (!z) return null;
+        const r = z.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: Math.min(r.top + r.height / 2, innerHeight - 20) };
+      })()`);
+      if (eve) {
+        for (let k = 1; k <= 8; k++) {
+          await touch('touchMove', 389 + (eve.x - 389) * (k / 8), 400 + (eve.y - 400) * (k / 8));
+          await sleep(30);
+        }
+        await sleep(100);
+      }
+      await touch('touchEnd', 0, 0);
+      await sleep(700);
+      // app 无 HUD：落位与否直接看服务端数据（翻天一天后卡片应落在那天的 eve）
+      const list = await persisted();
+      const yi = list.find((i) => i.title === '触屏乙');
+      if (day1 !== day0) ok(`触屏：贴边翻天（${day1.split(/\s+/)[0]}）`);
+      else fail(`触屏：贴边没翻天（day0=${day0} day1=${day1}）`);
+      // day1 形如「周二11.10」；把卡片日期换算成同形再比
+      const flippedDay = day1.match(/(\d{2})\.(\d{2})/);
+      const targetDate = flippedDay
+        ? `${new Date().getFullYear()}-${flippedDay[1]}-${flippedDay[2]}`
+        : null;
+      if (yi?.date === targetDate) ok('触屏：翻页后拖拽仍存活并落位 —— touch 目标没被销毁');
+      else fail(`触屏：翻页后拖拽被 pointercancel 或落位不对（卡在 ${yi?.date}，预期 ${targetDate}）`);
     }
   }
 

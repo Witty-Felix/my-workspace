@@ -16,6 +16,12 @@ Issues 与 spec 存放在 GitHub Issues（`Witty-Felix/my-workspace`），通过
 
 single-context 布局：根目录 `GLOSSARY.md` + `docs/adr/`。See `docs/agents/domain.md`.
 
+改**拖拽、落位、触屏交互**前，先读 `docs/adr/0006-drag-place.md`（该行为的三次修订都在里面，含触屏 pointercancel 的根因与约束）。
+
+### 多轮需求落地
+
+一个会话里用户分多轮提出过 UI/交互要求的，动手改代码前先把**全部**要求列成 checklist 逐条核对——只对最后一轮是最常见的漏项来源。
+
 ### Checks
 
 改动前后跑 `cd app && npm run check && npm run smoke`；发布走 `cd app && npm run deploy`（不要手写 tar/ssh）。见 `docs/deploy.md`。

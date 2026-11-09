@@ -225,7 +225,7 @@ try {
     await sleep(90);
     const ghost = await js(`document.querySelectorAll('.drag-ghost').length`);
     const amZone = await js(`(() => {
-      const z = document.querySelector('.zone-layer .zone[data-slot="am"]');
+      const z = document.querySelector('.phone-list.dropping .zone[data-slot="am"]');
       if (!z) return null;
       const r = z.getBoundingClientRect();
       return { x: r.left + r.width / 2, y: r.top + r.height * 0.6 };

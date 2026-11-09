@@ -1,27 +1,40 @@
-@@ -114,6 +114,8 @@
+@@ -157,7 +157,6 @@
+ <span class="dnum">11.11</span>
  </div>
  <div class="stack">
- <article class="card am solo" tabindex="0" role="button" aria-label="上午 夹具甲" style="--tilt: -0.3deg;">
-+<button type="button" class="tick" title="标记完成" aria-label="标记完成">
-+</button>
- <div class="meta">
- <i class="sdot">
- </i>上午</div>
-@@ -121,6 +123,8 @@
- <p class="note">上午</p>
- </article>
- <article class="card pm solo" tabindex="0" role="button" aria-label="下午 夹具乙" style="--tilt: 0.35deg;">
-+<button type="button" class="tick" title="标记完成" aria-label="标记完成">
-+</button>
- <div class="meta">
- <i class="sdot">
- </i>下午</div>
-@@ -137,6 +141,8 @@
+-<p class="empty">空着</p>
+ <button type="button" class="add" title="在 11.11 添加安排">＋</button>
+ </div>
+ </div>
+@@ -167,7 +166,6 @@
+ <span class="dnum">11.12</span>
  </div>
  <div class="stack">
- <article class="card eve solo" tabindex="0" role="button" aria-label="晚上 夹具丙" style="--tilt: -0.3deg;">
-+<button type="button" class="tick" title="标记完成" aria-label="标记完成">
-+</button>
- <div class="meta">
- <i class="sdot">
- </i>晚上</div>
+-<p class="empty">空着</p>
+ <button type="button" class="add" title="在 11.12 添加安排">＋</button>
+ </div>
+ </div>
+@@ -177,7 +175,6 @@
+ <span class="dnum">11.13</span>
+ </div>
+ <div class="stack">
+-<p class="empty">空着</p>
+ <button type="button" class="add" title="在 11.13 添加安排">＋</button>
+ </div>
+ </div>
+@@ -187,7 +184,6 @@
+ <span class="dnum">11.14</span>
+ </div>
+ <div class="stack">
+-<p class="empty">空着</p>
+ <button type="button" class="add" title="在 11.14 添加安排">＋</button>
+ </div>
+ </div>
+@@ -197,7 +193,6 @@
+ <span class="dnum">11.15</span>
+ </div>
+ <div class="stack">
+-<p class="empty">空着</p>
+ <button type="button" class="add" title="在 11.15 添加安排">＋</button>
+ </div>
+ </div>
