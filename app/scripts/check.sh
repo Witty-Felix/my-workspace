@@ -82,5 +82,11 @@ else
 fi
 
 echo
+echo "== 6. 悬停样式（触屏没有 hover）=="
+hover_out="$(node scripts/check-css-hover.mjs 2>&1)"
+printf '%s\n' "$hover_out"
+case "$hover_out" in *"✗"*) fail=1;; esac
+
+echo
 if [ "$fail" -ne 0 ]; then echo "✗ check 未通过"; exit 1; fi
 echo "✓ check 全部通过"

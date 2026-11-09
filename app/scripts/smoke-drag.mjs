@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findBrowser, touchFor } from './lib/cdp.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -24,21 +25,6 @@ let failures = 0;
 if (typeof WebSocket !== 'function') {
   console.error('需要 Node 22+（内置 WebSocket）。当前 ' + process.version);
   process.exit(2);
-}
-
-function findBrowser() {
-  const env = [process.env.CHROME_BIN, process.env.EDGE_BIN].filter(Boolean);
-  const win = [
-    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-  ];
-  const nix = ['/usr/bin/google-chrome', '/usr/bin/chromium', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
-  for (const p of [...env, ...(process.platform === 'win32' ? win : nix)]) {
-    try { if (fs.existsSync(p)) return p; } catch (_) {}
-  }
-  return null;
 }
 
 const browser = findBrowser();
@@ -281,9 +267,7 @@ try {
   await js(`document.getElementById('pStrip').children[4].click()`);
   await sleep(300);
 
-  const touch = (type, x, y) => send('Input.dispatchTouchEvent', {
-    type, touchPoints: (type === 'touchEnd' || type === 'touchCancel') ? [] : [{ x, y, id: 1 }],
-  });
+  const touch = touchFor(send);
   const atCard = (title) => js(`(() => {
     const c = [...document.querySelectorAll('#pList .card')].find(x => x.querySelector('.title').textContent === ${JSON.stringify(title)});
     if (!c) return null;

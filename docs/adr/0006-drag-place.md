@@ -35,3 +35,5 @@ date: 2026-11-07
 代价：一天只剩一条安排时，三个格子只能挤在纸面下半段（命中区不小于 24px，地方不够就盖到纸外）。换来的是拖拽期间零重排。原来那条「纸会长高 60px」的已知代价随之作废。
 
 配套：`scripts/smoke-drag.mjs` 增加触屏档（移动视口 + `Input.dispatchTouchEvent`）。原先它只发鼠标事件，所以「鼠标能拖」一直被当成「能拖」。
+
+实现：`public/app.js` 的「拖拽落位」段（`bandsFor` / `buildZones` / `hitTest` / `startDrag`）；自检：`npm run smoke:drag`（鼠标档 + 触屏档）。

@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findBrowser, touchFor } from './lib/cdp.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -22,16 +23,6 @@ let bad = 0;
 const ok = (m) => console.log('  ✓ ' + m);
 const fail = (m) => { bad++; console.log('  ✗ ' + m); };
 
-function findBrowser() {
-  return [
-    process.env.CHROME_BIN, process.env.EDGE_BIN,
-    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-    '/usr/bin/google-chrome', '/usr/bin/chromium',
-  ].filter(Boolean).find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
-}
 const browser = findBrowser();
 if (!browser) { console.error('没找到 Chrome/Edge，无法验证完成态'); process.exit(2); }
 if (typeof WebSocket !== 'function') { console.error('需要 Node 22+（内置 WebSocket）'); process.exit(2); }
@@ -207,6 +198,50 @@ try {
     const moved = await apiItem();
     if (moved?.date === days[3] && moved?.slot === 'pm' && moved?.doneAt) ok('已完成卡能拖，完成态不丢');
     else fail(`拖完不对：${moved?.date} ${moved?.slot} done=${!!moved?.doneAt}`);
+  }
+
+  // 触屏一遍：鼠标事件不会触发隐式指针捕获，触屏的问题只有 touch 事件能照出来
+  console.log('== 触屏：已划掉的卡仍可拖 ==');
+  const to = touchFor(send);
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  await send('Page.reload');
+  await sleep(1700);
+  await js(`document.getElementById('pStrip').children[3].click()`);
+  await sleep(300);
+
+  const doneCard = await js(`(() => {
+    const c = [...document.querySelectorAll('#pList .card')].find(x => x.querySelector('.title').textContent === ${JSON.stringify(T)});
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, done: c.classList.contains('done') };
+  })()`);
+  if (!doneCard) fail('触屏：那天找不到已完成的那张卡');
+  else if (!doneCard.done) fail('触屏：卡不在完成态');
+  else {
+    await to('touchStart', doneCard.x, doneCard.y);
+    await sleep(380);
+    await to('touchMove', doneCard.x, doneCard.y + 8);
+    await sleep(90);
+    const ghost = await js(`document.querySelectorAll('.drag-ghost').length`);
+    const amZone = await js(`(() => {
+      const z = document.querySelector('.zone-layer .zone[data-slot="am"]');
+      if (!z) return null;
+      const r = z.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height * 0.6 };
+    })()`);
+    if (ghost !== 1 || !amZone) {
+      await to('touchCancel', 0, 0);
+      fail(`触屏：拿不起来（ghost=${ghost} 上午格=${!!amZone}）`);
+    } else {
+      await to('touchMove', amZone.x, amZone.y);
+      await sleep(100);
+      await to('touchEnd', 0, 0);
+      await sleep(800);
+      const moved = await apiItem();
+      if (moved?.date === days[3] && moved?.slot === 'am' && moved?.doneAt) ok('触屏：已完成的卡能拖，完成态不丢');
+      else fail(`触屏拖完不对：${moved?.date} ${moved?.slot} done=${!!moved?.doneAt}`);
+    }
   }
 
   if (errors.length) fail('页面有异常：' + errors.join(' / '));

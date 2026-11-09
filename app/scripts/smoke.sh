@@ -129,7 +129,18 @@ else
   }
   dump "http://127.0.0.1:$OLD_PORT/" > "$SCRATCH/dom-old.txt"
   dump "http://127.0.0.1:$NEW_PORT/" > "$SCRATCH/dom-new.txt"
-  if diff -u "$SCRATCH/dom-old.txt" "$SCRATCH/dom-new.txt" > "$SCRATCH/dom.diff"; then
+
+  # 有的机器上 --dump-dom 会吐空：两个空文件 diff 也「一致」，那种一致不能算数。
+  # 换 CDP 再取一次；后面的重试用例也沿用这个模式，免得先白跑一遍把 mock 的次数耗掉。
+  if [ "$(grep -c 'class="card[ "]' "$SCRATCH/dom-new.txt" || true)" -eq 0 ]; then
+    DUMP_CDP=1
+    node "$HERE/lib/dump-dom.mjs" "http://127.0.0.1:$NEW_PORT/" > "$SCRATCH/dom-new.txt" 2>/dev/null || true
+    node "$HERE/lib/dump-dom.mjs" "http://127.0.0.1:$OLD_PORT/" > "$SCRATCH/dom-old.txt" 2>/dev/null || true
+  fi
+
+  if [ "$(grep -c 'class="card[ "]' "$SCRATCH/dom-new.txt" || true)" -eq 0 ]; then
+    bad "浏览器没渲染出内容（dump 为空），这次比对不算数"
+  elif diff -u "$SCRATCH/dom-old.txt" "$SCRATCH/dom-new.txt" > "$SCRATCH/dom.diff"; then
     ok "DOM 归一化后一致（日列 $(grep -c 'class="day[ "]' "$SCRATCH/dom-new.txt") / 卡片 $(grep -c 'class="card[ "]' "$SCRATCH/dom-new.txt")）"
   elif accept_diff "$SCRATCH/dom.diff" "$APP/scripts/dom-accepted.diff" "渲染结果"; then
     :
@@ -143,7 +154,11 @@ echo "== 3. 首屏失败重试 =="
 node "$HERE/lib/mock.js" "$MOCK_PORT" once "$NEW_PORT" > "$SCRATCH/mock.log" 2>&1 & MOCK_PID=$!
 sleep 1
 if [ -n "$BROWSER" ]; then
-  "$BROWSER" --headless=new --disable-gpu --virtual-time-budget=6000 --dump-dom "http://127.0.0.1:$MOCK_PORT/" 2>/dev/null > "$SCRATCH/retry.html"
+  if [ "${DUMP_CDP:-0}" = "1" ]; then
+    node "$HERE/lib/dump-dom.mjs" "http://127.0.0.1:$MOCK_PORT/" > "$SCRATCH/retry.html" 2>/dev/null || true
+  else
+    "$BROWSER" --headless=new --disable-gpu --virtual-time-budget=6000 --dump-dom "http://127.0.0.1:$MOCK_PORT/" 2>/dev/null > "$SCRATCH/retry.html"
+  fi
   cards="$(grep -o 'class="card[ "]' "$SCRATCH/retry.html" | wc -l | tr -d ' ')"
   hits="$(curl -s "http://127.0.0.1:$MOCK_PORT/hits")"
   if [ "$cards" -gt 0 ] && [ "$hits" -le 2 ]; then

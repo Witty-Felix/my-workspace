@@ -157,7 +157,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   box-shadow:0 0 0 2px var(--line), 2px 2px 0 var(--shadow-soft);
   transition:transform 110ms ease, box-shadow 110ms ease, background-color 500ms var(--ease-scene);
 }
+@media (hover:hover){
 .ic:hover{transform:translate(-1px,-1px);box-shadow:0 0 0 2px var(--line), 3px 3px 0 var(--shadow-soft)}
+}
 .ic:active{transform:translate(1px,2px);box-shadow:0 0 0 2px var(--line), 0 0 0 var(--shadow-soft)}
 
 .wk{
@@ -168,7 +170,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   border-radius:11px 12px 10px 12px;
   transition:background-color 130ms ease, box-shadow 130ms ease;
 }
+@media (hover:hover){
 .wk:hover{background:var(--note);box-shadow:0 0 0 2px var(--ink-3)}
+}
 .wk-key{
   font-family:var(--font-num);
   font-size:16px;
@@ -192,7 +196,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   box-shadow:0 0 0 2px var(--ink-3);
   transition:box-shadow 130ms ease, color 130ms ease, background-color 130ms ease;
 }
+@media (hover:hover){
 .tag:hover{color:var(--ink);box-shadow:0 0 0 2px var(--line)}
+}
 .tag.on{
   color:#1A1A18;
   background:var(--sun);
@@ -281,7 +287,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   filter:url(#sketchy-sm) drop-shadow(.062em .125em .125em rgba(0,0,0,.25));
   transition:transform 500ms var(--ease-scene);
 }
+@media (hover:hover){
 .hs__sun:hover{transform:scale(1.06) rotate(4deg)}
+}
 
 .hs__moon{
   position:absolute;inset:0;width:100%;height:100%;
@@ -293,7 +301,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
     0 -.062em .062em 0 #969696 inset;
   transition:transform 500ms var(--ease-scene);
 }
+@media (hover:hover){
 .hs__moon:hover{transform:translateX(0) rotate(8deg)}
+}
 
 .hs__spot{
   position:absolute;top:.75em;left:.312em;
@@ -572,10 +582,12 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .card.pm{background:var(--pm)}
 .card.eve{background:var(--eve)}
 
+@media (hover:hover){
 .card:hover{
   transform:rotate(0deg) translateY(-2px);
   box-shadow:0 0 0 2px var(--line), 4px 5px 0 var(--shadow-soft);
   z-index:3;
+}
 }
 .card:active{transform:rotate(0deg) translateY(0);box-shadow:0 0 0 2px var(--line), 1px 1px 0 var(--shadow-soft)}
 
@@ -651,8 +663,10 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   filter:url(#sketchy-k);
   opacity:0;
 }
-.card:hover .tick,
 .card:focus-within .tick{opacity:1}
+@media (hover:hover){
+.card:hover .tick{opacity:1}
+}
 .card.done .tick{
   background:var(--ink-2);
   border-color:var(--ink-2);
@@ -680,7 +694,10 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   opacity:0;
   transition:opacity 130ms ease;
 }
-.card:hover .acts, .card:focus-within .acts{opacity:1}
+.card:focus-within .acts{opacity:1}
+@media (hover:hover){
+.card:hover .acts{opacity:1}
+}
 .acts button{
   width:18px;height:18px;
   display:grid;place-items:center;
@@ -690,9 +707,13 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   border-radius:6px 7px 6px 7px;
   transition:background-color 120ms ease, color 120ms ease;
 }
+@media (hover:hover){
 .acts button:hover{background:var(--sun);color:#1A1A18}
+}
 .acts button[disabled]{opacity:.4;cursor:default}
+@media (hover:hover){
 .acts button[disabled]:hover{background:transparent;color:var(--ink-3)}
+}
 
 /* 空态 + 添加 */
 /* 空态只是一句话，不画框 —— 再画一个虚线圈就和下面的「＋」撞成两个空盒子 */
@@ -710,7 +731,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   color:var(--ink-3);
   transition:color 150ms ease;
 }
+@media (hover:hover){
 .day:hover .empty{color:var(--ink-2)}
+}
 
 .add{
   display:grid;
@@ -723,11 +746,15 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   border-radius:10px 12px 11px 11px;
   transition:color 150ms ease, border-color 150ms ease, background-color 150ms ease;
 }
+@media (hover:hover){
 .day:hover .add, .stack:hover .add{color:var(--ink);border-color:var(--ink-2)}
+}
+@media (hover:hover){
 .add:hover{
   color:#1A1A18;
   background:var(--sun);
   border-color:var(--line);
+}
 }
 
 /* ============================ 手机视图 ============================ */
@@ -769,7 +796,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   font-variant-numeric:tabular-nums;
   color:var(--ink);
 }
+@media (hover:hover){
 .chip:hover{background:var(--note);box-shadow:inset 0 0 0 1.5px var(--ink-3)}
+}
 .chip.today b{
   padding:0 3px;
   box-shadow:inset 0 0 0 1.5px var(--sun);
@@ -817,7 +846,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   color:var(--ink-2);
   border-bottom:1.5px dashed var(--ink-3);
 }
+@media (hover:hover){
 .phone-day .back:hover{color:var(--ink);border-color:var(--line)}
+}
 
 .phone-list{display:flex;flex-direction:column;gap:8px}
 .phone-list .slot-head{
@@ -907,7 +938,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   box-shadow:inset 0 0 0 2px var(--ink-3);
   transition:background-color 130ms ease, color 130ms ease, box-shadow 130ms ease;
 }
+@media (hover:hover){
 .seg label:hover span{color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink-2)}
+}
 .seg input:checked + span{
   color:#1A1A18;
   background:var(--sun);
@@ -949,15 +982,23 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   box-shadow:0 0 0 2px var(--line), 3px 3px 0 var(--shadow-soft);
   transition:transform 110ms ease, box-shadow 110ms ease, background-color 130ms ease;
 }
+@media (hover:hover){
 .btn:hover{transform:translate(-1px,-1px);box-shadow:0 0 0 2px var(--line), 4px 4px 0 var(--shadow-soft)}
+}
 .btn:active{transform:translate(1px,2px);box-shadow:0 0 0 2px var(--line), 0 0 0 var(--shadow-soft)}
 .btn.primary{background:var(--sun);color:#1A1A18}
 .btn.ghost{background:transparent;color:var(--ink-2);box-shadow:inset 0 0 0 2px var(--ink-3)}
+@media (hover:hover){
 .btn.ghost:hover{color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink-2)}
+}
 .btn.danger{background:transparent;color:var(--danger);box-shadow:inset 0 0 0 2px var(--danger)}
+@media (hover:hover){
 .btn.danger:hover{background:var(--danger);color:var(--note)}
+}
 .btn.wide{width:100%;margin-top:6px;color:var(--ink-2);box-shadow:inset 0 0 0 2px var(--ink-3)}
+@media (hover:hover){
 .btn.wide:hover{color:#1A1A18;background:var(--sun);box-shadow:0 0 0 2px var(--line), 2px 2px 0 var(--shadow-soft)}
+}
 .btn[disabled]{opacity:.55;cursor:default;transform:none}
 
 /* ============================ 轻提示 ============================ */
@@ -1058,36 +1099,8 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 }
 
 /* 触屏没有 hover：浏览器会在手指按下时套用 :hover 并一直留着，
-   结果点一下卡片就浮着不落、点下一个才弹回去。这里把「会动位置或整块变色」
-   的那几条按回静止态；纯文字/边框变色的留着当按压反馈。 */
-@media (hover:none){
-  .card:hover{
-    transform:rotate(var(--tilt,0deg));
-    box-shadow:0 0 0 2px var(--line), 2px 3px 0 var(--shadow-soft);
-    z-index:auto;
-  }
-  .card:hover .tick{opacity:.55}
-  .ic:hover{transform:none;box-shadow:0 0 0 2px var(--line), 2px 2px 0 var(--shadow-soft)}
-  .btn:hover{transform:none;box-shadow:0 0 0 2px var(--line), 3px 3px 0 var(--shadow-soft)}
-  .btn.danger:hover{background:transparent;color:var(--danger)}
-  .btn.wide:hover{background:transparent;color:var(--ink-2);box-shadow:inset 0 0 0 2px var(--ink-3)}
-  .chip:hover{background:transparent;box-shadow:none}
-  .add:hover,
-  .day:hover .add,
-  .stack:hover .add{background:transparent;border-color:var(--ink-3);color:var(--ink-2)}
-  .acts button:hover{background:transparent}
-  .wk:hover{background:transparent;box-shadow:none}
-  .tag:hover{color:var(--ink-2);box-shadow:0 0 0 2px var(--ink-3)}
-  .btn.ghost:hover{color:var(--ink-2);box-shadow:inset 0 0 0 2px var(--ink-3)}
-  .seg label:hover span{color:var(--ink-2);box-shadow:inset 0 0 0 2px var(--ink-3)}
-  .phone-day .back:hover{color:var(--ink-2);border-color:var(--ink-3)}
-  .hs__sun:hover{transform:none}
-  .hs__moon:hover{transform:translateX(100%)}
-}
-
-@media (hover:none) and (max-width:900px){
-  .card:hover{transform:none}
-}
+   点一下卡片就浮着不落、点下一个才弹回去。所以悬停一律写在
+   @media (hover:hover) 里，静止态才是地基。scripts/check-css-hover.mjs 盯着这条。 */
 
 @media (prefers-reduced-motion: reduce){
   .hs *, .sheet, .card, .btn, .ic{
