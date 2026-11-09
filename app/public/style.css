@@ -73,9 +73,13 @@
   --danger:#E17A72;
 }
 
-*{box-sizing:border-box}
+/* 系统点击高亮整块盖在卡片上（浅青一片），工作台自己用 :active 表达按下 */
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 
 html,body{margin:0}
+
+/* 手机上纵向过卷会把整页拽下去再弹回；工作台只有「纸」，没有下拉刷新 */
+html,body{overscroll-behavior-y:none}
 
 body{
   background-color:var(--paper);
@@ -84,7 +88,9 @@ body{
   font:15px/1.6 var(--font-body);
   -webkit-font-smoothing:antialiased;
   transition:background-color 500ms var(--ease-scene), color 500ms var(--ease-scene);
+  /* 100vh 在手机上算的是「地址栏收起后」的高度，一滚动就多出一截 */
   min-height:100vh;
+  min-height:100dvh;
   display:flex;
   flex-direction:column;
 }
@@ -557,6 +563,10 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   transform:rotate(var(--tilt,0deg));
   transition:transform 140ms ease, box-shadow 140ms ease, background-color 500ms var(--ease-scene);
   word-break:break-word;
+  /* 长按是「拿起」，不是选字：否则按下去先弹系统选中和拷贝菜单 */
+  -webkit-user-select:none;
+  user-select:none;
+  -webkit-touch-callout:none;
 }
 .card.am{background:var(--am)}
 .card.pm{background:var(--pm)}
@@ -840,6 +850,17 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .editor{
   padding:0;
   border:0;
+  /* 位置由 app.js 按 visualViewport 摆：键盘弹起时 dvh 不变，靠 CSS 居中会被键盘压住 */
+  position:fixed;
+  margin:0;
+  left:50%;
+  top:50%;
+  transform:translate(-50%,-50%);
+  /* 框自己得能滚，别把「取消/保存」顶出可见区 */
+  max-height:calc(100vh - 24px);
+  max-height:calc(100dvh - 24px);
+  overflow:auto;
+  overscroll-behavior:contain;
   width:min(392px, calc(100vw - 32px));
   color:var(--ink);
   background:var(--note);
@@ -981,10 +1002,11 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   .nav{display:none}
   .hs--sm{--toggle-size:15px;margin-left:auto}
 
-  .stage{padding:12px 12px 26px}
+  /* 纸按内容长，不靠 flex 撑满屏幕 —— 一天只有一条安排时不该看到一张巨长的空纸 */
+  .stage{padding:12px 12px calc(26px + env(safe-area-inset-bottom))}
   .sheet{display:none}
-  .phone{display:flex;flex-direction:column;flex:1;min-height:0}
-  .phone-paper{flex:1}
+  .phone{display:flex;flex-direction:column;flex:0 0 auto;min-height:0}
+  .phone-paper{flex:0 0 auto}
 
   /* 卡片：文字在左，排序钮收成右侧一条竖列，用虚线隔开；最右再留出完成勾 */
   .card{
@@ -1023,6 +1045,8 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   }
   .acts button:active{background:var(--sun);color:#1A1A18}
   .add{opacity:1}
+  /* 字号小于 16px 时，部分浏览器一聚焦就整页放大，键盘一收又缩回去 */
+  .in{font-size:16px}
 }
 
 /* 窄屏：开关单独占右上，周导航落到第二行 —— 不去挤压任何一边 */
@@ -1031,6 +1055,38 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   .brand{order:1}
   .hs{order:2;margin-left:auto}
   .nav{order:3;width:100%;margin-left:0;justify-content:center}
+}
+
+/* 触屏没有 hover：浏览器会在手指按下时套用 :hover 并一直留着，
+   结果点一下卡片就浮着不落、点下一个才弹回去。这里把「会动位置或整块变色」
+   的那几条按回静止态；纯文字/边框变色的留着当按压反馈。 */
+@media (hover:none){
+  .card:hover{
+    transform:rotate(var(--tilt,0deg));
+    box-shadow:0 0 0 2px var(--line), 2px 3px 0 var(--shadow-soft);
+    z-index:auto;
+  }
+  .card:hover .tick{opacity:.55}
+  .ic:hover{transform:none;box-shadow:0 0 0 2px var(--line), 2px 2px 0 var(--shadow-soft)}
+  .btn:hover{transform:none;box-shadow:0 0 0 2px var(--line), 3px 3px 0 var(--shadow-soft)}
+  .btn.danger:hover{background:transparent;color:var(--danger)}
+  .btn.wide:hover{background:transparent;color:var(--ink-2);box-shadow:inset 0 0 0 2px var(--ink-3)}
+  .chip:hover{background:transparent;box-shadow:none}
+  .add:hover,
+  .day:hover .add,
+  .stack:hover .add{background:transparent;border-color:var(--ink-3);color:var(--ink-2)}
+  .acts button:hover{background:transparent}
+  .wk:hover{background:transparent;box-shadow:none}
+  .tag:hover{color:var(--ink-2);box-shadow:0 0 0 2px var(--ink-3)}
+  .btn.ghost:hover{color:var(--ink-2);box-shadow:inset 0 0 0 2px var(--ink-3)}
+  .seg label:hover span{color:var(--ink-2);box-shadow:inset 0 0 0 2px var(--ink-3)}
+  .phone-day .back:hover{color:var(--ink-2);border-color:var(--ink-3)}
+  .hs__sun:hover{transform:none}
+  .hs__moon:hover{transform:translateX(100%)}
+}
+
+@media (hover:none) and (max-width:900px){
+  .card:hover{transform:none}
 }
 
 @media (prefers-reduced-motion: reduce){
@@ -1067,47 +1123,37 @@ body.busy::before{opacity:1;width:72%}
 body.busy .stage{opacity:.5;pointer-events:none}
 
 /* ============================ 拖拽落位 ============================
-   拖动时才把一天铺成上午/下午/晚上三个投放格，静止态不新增任何节点；
-   ↑↓ 也只是把字形换成 CSS 箭头，文字节点留着给读屏软件。
-   两者都不改结构，所以渲染比对（scripts/smoke.sh）拿旧基线仍然逐字一致。 */
+   投放格只在拖拽期间存在，是盖在页面上的一层（fixed），位置照原卡片算：
+   列表本身不重排，纸不长高，整页也不跳。
+   ↑↓ 只是把字形换成 CSS 箭头，文字节点留着给读屏软件。
+   两者都只在交互中出现，所以渲染比对（scripts/smoke.sh）拿旧基线仍然逐字一致。 */
 
-.stack.dropping,
-.phone-list.dropping{gap:7px}
+.zone-layer{
+  position:fixed;
+  inset:0;
+  z-index:120;
+  pointer-events:none;
+}
 
-.zone{
-  position:relative;
+.zone-layer .zone{
+  position:absolute;
   display:flex;
-  flex-direction:column;
-  gap:6px;
-  flex:1 1 auto;
-  min-height:54px;
-  padding:16px 4px 4px;
+  align-items:center;
+  justify-content:center;
+  padding:0 6px;
   border:2px dashed rgba(26,26,24,.13);
-  border-radius:12px 14px 12px 14px;
+  border-radius:10px 12px 10px 12px;
   transition:background-color 120ms ease, border-color 120ms ease;
 }
-[data-theme="dark"] .zone{border-color:rgba(237,232,214,.16)}
+[data-theme="dark"] .zone-layer .zone{border-color:rgba(237,232,214,.16)}
 
-.zone-lab{
-  position:absolute;
-  top:3px;left:6px;
+.zone-layer .zone-lab{
   font-family:var(--font-display);
   font-size:10px;
   letter-spacing:.16em;
   color:var(--ink-3);
-  pointer-events:none;
   transition:color 120ms ease;
 }
-.zone-empty{
-  font-family:var(--font-display);
-  font-size:11px;
-  letter-spacing:.1em;
-  color:var(--ink-3);
-  padding:2px 4px;
-}
-
-/* 拖拽期间卡片不再抢指针，落点判定只认格子 */
-.zone .card{transform:none;pointer-events:none;cursor:grabbing}
 
 .zone.on{border-color:var(--line)}
 .zone.on .zone-lab{color:var(--ink)}
@@ -1120,7 +1166,9 @@ body.dragging{
   user-select:none;
   -webkit-user-select:none;
 }
-body.dragging .card{cursor:grabbing}
+body.dragging .card{cursor:grabbing;pointer-events:none}
+/* 被拖的那张留在原位，只褪墨：摘走会带动整列重排 */
+.drag-src{opacity:.32}
 
 .drag-ghost{
   position:fixed;
@@ -1132,12 +1180,6 @@ body.dragging .card{cursor:grabbing}
   opacity:.96;
   will-change:left, top;
 }
-
-/* 手机投放态：三格均分当天那张纸，手指好落 */
-body.dragging .phone-paper{display:flex;flex-direction:column}
-.phone-list.dropping{flex:1;min-height:0}
-.phone-list.dropping .zone{flex:1 1 0;min-height:0;padding:18px 8px 8px}
-.phone-list.dropping .zone-lab{font-size:11px}
 
 /* ↑↓ 换手绘箭头：文字节点留着给读屏软件，只把字形藏掉（DOM 不变） */
 .acts button{font-size:0;line-height:0;color:var(--ink-2)}

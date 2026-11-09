@@ -264,6 +264,148 @@ try {
     else fail('贴边没翻天');
   }
 
+  // 触屏：真机上的三种手势。CDP 的 touch 事件才会带 pointerType=touch，
+  // 鼠标事件走不到「隐式指针捕获」那条路，所以这档不能省。
+  console.log('== 手机：触屏 ==');
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  const tDay = days[4];
+  for (const [slot, title] of [['am', '触屏甲'], ['pm', '触屏乙']]) {
+    await fetch(`http://127.0.0.1:${PORT}/api/items`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: tDay, slot, title, note: '' }),
+    });
+  }
+  await send('Page.reload', {});
+  await sleep(1600);
+  await js(`document.getElementById('pStrip').children[4].click()`);
+  await sleep(300);
+
+  const touch = (type, x, y) => send('Input.dispatchTouchEvent', {
+    type, touchPoints: (type === 'touchEnd' || type === 'touchCancel') ? [] : [{ x, y, id: 1 }],
+  });
+  const atCard = (title) => js(`(() => {
+    const c = [...document.querySelectorAll('#pList .card')].find(x => x.querySelector('.title').textContent === ${JSON.stringify(title)});
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`);
+  const atZone = (slot) => js(`(() => {
+    const z = document.querySelector('.zone-layer .zone[data-slot="${slot}"]');
+    if (!z) return null;
+    const r = z.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height * 0.6 };
+  })()`);
+
+  const t1 = await atCard('触屏甲');
+  if (!t1) fail('手机列表里没有触屏夹具');
+  else {
+    // 没长按就滑：应当当滚动处理，不拿起
+    await touch('touchStart', t1.x, t1.y);
+    await touch('touchMove', t1.x, t1.y - 26);
+    await sleep(80);
+    const swiped = await js(`document.querySelectorAll('.drag-ghost').length`);
+    await touch('touchEnd', 0, 0);
+    await sleep(250);
+    if (swiped === 0) ok('触屏：没长按就滑，不拿起');
+    else fail('触屏：没长按也被拿起了');
+
+    // 长按 350ms 再动：应当拿起并铺开三格
+    const src = await atCard('触屏甲');
+    await touch('touchStart', src.x, src.y);
+    await sleep(360);
+    await touch('touchMove', src.x, src.y + 6);
+    await sleep(80);
+    const ghost = await js(`document.querySelectorAll('.drag-ghost').length`);
+    const zones = await js(`document.querySelectorAll('.zone-layer .zone').length`);
+    if (ghost === 1 && zones === 3) ok('触屏：长按拿起 → 三格铺开');
+    else fail(`触屏：长按后 ghost=${ghost} 投放格=${zones}`);
+
+    const pm = await atZone('pm');
+    if (!pm) { await touch('touchCancel', 0, 0); fail('触屏：下午格没找到'); }
+    else {
+      // 落在「触屏乙」上半 → 位次 0，应该插到它前面
+      const above = await atCard('触屏乙');
+      const target = above ? { x: above.x, y: above.y - 14 } : pm;
+      await touch('touchMove', target.x, target.y);
+      await sleep(100);
+      await touch('touchEnd', 0, 0);
+      await sleep(700);
+      const list = await persisted();
+      const jia = list.find((i) => i.title === '触屏甲');
+      const yi = list.find((i) => i.title === '触屏乙');
+      if (jia?.date === tDay && jia?.slot === 'pm') ok('触屏：松手落到下午');
+      else fail(`触屏落点不对：${jia?.date} ${jia?.slot}`);
+      if (jia && yi && jia.order < yi.order) ok('触屏：落在卡片上半 → 位次插到前面');
+      else fail(`触屏位次不对：甲=${jia?.order} 乙=${yi?.order}`);
+      const rest = await js(`document.querySelectorAll('.drag-ghost, .zone-layer').length`);
+      if (rest === 0) ok('触屏：松手后不留残影');
+      else fail(`触屏：松手后还剩 ${rest} 个节点`);
+    }
+
+    // 拖到一半被打断（来电、系统手势）：界面必须回到静止态
+    const t2 = await atCard('触屏乙');
+    if (t2) {
+      await touch('touchStart', t2.x, t2.y);
+      await sleep(360);
+      await touch('touchMove', t2.x, t2.y + 8);
+      await sleep(80);
+      await touch('touchCancel', 0, 0);
+      await sleep(400);
+      const left = await js(`document.querySelectorAll('.drag-ghost, .zone-layer').length`);
+      if (left === 0) ok('触屏：拖拽被打断后回到静止态');
+      else fail(`触屏：打断后残留 ${left} 个节点`);
+    }
+  }
+
+  // 编辑框按 visualViewport 摆：至少保证没键盘时整个框和保存键都在可见区内
+  const tap = await atCard('触屏乙');
+  if (!tap) fail('触屏：找不到可点的卡');
+  else {
+    await touch('touchStart', tap.x, tap.y);
+    await touch('touchEnd', tap.x, tap.y);
+    await sleep(450);
+    const box = await js(`(() => {
+      const ed = document.getElementById('editor');
+      if (!ed.open) return null;
+      const r = ed.getBoundingClientRect();
+      const s = ed.querySelector('.primary').getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, save: s.bottom, h: innerHeight, w: innerWidth };
+    })()`);
+    if (!box) fail('触屏：点卡片没打开编辑框');
+    else if (box.top >= 0 && box.bottom <= box.h && box.left >= 0 && box.right <= box.w && box.save <= box.h) ok('编辑框整个留在可见区（保存键够得着）');
+    else fail(`编辑框超出可见区：${JSON.stringify(box)}`);
+    await js(`document.getElementById('cancelBtn').click()`);
+    await sleep(250);
+  }
+
+  // 没长按就滑 = 滚页面。把一天塞满、视口压矮，看滚动是否真的发生
+  console.log('== 手机：触屏滚动 ==');
+  for (let k = 0; k < 12; k++) {
+    await fetch(`http://127.0.0.1:${PORT}/api/items`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: days[5], slot: 'am', title: '滚动夹具' + k, note: '' }),
+    });
+  }
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 520, deviceScaleFactor: 2, mobile: true });
+  await send('Page.reload', {});
+  await sleep(1600);
+  await js(`document.getElementById('pStrip').children[5].click()`);
+  await sleep(300);
+  const scrollBefore = await js('window.scrollY');
+  for (let k = 0; k < 3; k++) {
+    const c = await atCard('滚动夹具' + k);
+    if (!c) break;
+    await touch('touchStart', c.x, c.y);
+    await touch('touchMove', c.x, c.y - 60);
+    await sleep(40);
+    await touch('touchEnd', 0, 0);
+    await sleep(220);
+  }
+  const scrollAfter = await js('window.scrollY');
+  if (scrollAfter > scrollBefore) ok(`触屏：没长按就滑能滚页面（scrollY ${scrollBefore}→${scrollAfter}）`);
+  else fail(`触屏：滑动没滚起来（scrollY ${scrollBefore}→${scrollAfter}）`);
+
   if (errors.length) fail('页面抛了脚本异常：' + errors.join(' | '));
   else ok('全程无脚本异常');
 } catch (e) {

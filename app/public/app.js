@@ -34,10 +34,12 @@ let items = [];
 let phoneDate = TODAY;
 let editState = null;
 
-// 拖拽状态。dropMode 为真时列里铺开三个投放格，静止态 DOM 与拖拽功能上线前完全一致
-let dropMode = false;
+// 拖拽状态。投放格是拖拽期间才盖上去的一层，静止态 DOM 与拖拽上线前完全一致
 let drag = null;
 let lastDropAt = 0;
+let zoneLayer = null;   // 覆盖层容器：拖拽期间才存在
+let zoneList = [];     // 覆盖层里的投放格，位置照原卡片算
+let hotZone = null;     // 当前高亮的那一格
 // 卡片 DOM → 安排对象：拖拽要认卡，但不往 DOM 里加属性（静止态要和服务端渲染的基线逐字一致）
 const itemOf = new WeakMap();
 // 拖拽起手时预取前后两周，翻周不必等跨境往返；一次即弃，写操作后清空
@@ -171,9 +173,6 @@ function siblingsFn(list) {
     .sort(D.byOrder);
 }
 
-// 拖拽中的那张卡已从列表里摘走，落点索引按剩下的卡算
-const visibleItems = () => (drag ? items.filter((x) => x.id !== drag.item.id) : items);
-
 /* 时段选择：三个选项从 domain.js 生成，标签不再在 HTML 里写死 */
 function renderSlotPicker() {
   const seg = $('seg');
@@ -199,6 +198,8 @@ function makeCard(item, siblingsOf, idxForTilt = 0) {
   card.setAttribute('role', 'button');
   card.setAttribute('aria-label', `${D.SLOT_LABELS[item.slot]} ${item.title}${item.doneAt ? '（已完成）' : ''}`);
   card.style.setProperty('--tilt', (idxForTilt % 2 ? .35 : -.3) + 'deg');
+  // 拖拽中的那张卡留在原位，只把墨褪掉 —— 摘走会带动整列重排，纸跟着长高
+  if (drag && drag.item.id === item.id) card.classList.add('drag-src');
 
   // 常驻的完成勾：常显（触屏没有 hover），点它只改完成状态，不碰排序与落位
   const tick = document.createElement('button');
@@ -272,28 +273,6 @@ function makeCard(item, siblingsOf, idxForTilt = 0) {
   return card;
 }
 
-// 投放格：拖拽时把一天的卡片按时段分成三格，落哪格算哪段
-function makeZone(date, slot, list, siblingsOf) {
-  const z = document.createElement('div');
-  z.className = 'zone z-' + slot;
-  z.dataset.date = date;
-  z.dataset.slot = slot;
-
-  const lab = document.createElement('span');
-  lab.className = 'zone-lab';
-  lab.textContent = D.SLOT_LABELS[slot];
-  z.appendChild(lab);
-
-  if (!list.length) {
-    const e = document.createElement('span');
-    e.className = 'zone-empty';
-    e.textContent = '空';
-    z.appendChild(e);
-  }
-  list.forEach((it, k) => z.appendChild(makeCard(it, siblingsOf, k)));
-  return z;
-}
-
 function renderHeader() {
   const isThis = ymd(weekStart) === ymd(startOfWeek(new Date()));
   $('wkKey').textContent = isoWeek(weekStart);
@@ -304,7 +283,7 @@ function renderHeader() {
 function renderWeek() {
   const week = $('week');
   week.textContent = '';
-  const pool = visibleItems();
+  const pool = items;
   const siblingsOf = siblingsFn(pool);
 
   for (let i = 0; i < 7; i++) {
@@ -334,30 +313,23 @@ function renderWeek() {
     day.appendChild(head);
 
     const stack = document.createElement('div');
-    stack.className = 'stack' + (dropMode ? ' dropping' : '');
+    stack.className = 'stack';
+    list.forEach((it, k) => stack.appendChild(makeCard(it, siblingsOf, k)));
 
-    if (dropMode) {
-      for (const slot of D.SLOTS) {
-        stack.appendChild(makeZone(key, slot, list.filter((it) => it.slot === slot), siblingsOf));
-      }
-    } else {
-      list.forEach((it, k) => stack.appendChild(makeCard(it, siblingsOf, k)));
-
-      if (!list.length) {
-        const hint = document.createElement('p');
-        hint.className = 'empty';
-        hint.textContent = '空着';
-        stack.appendChild(hint);
-      }
-
-      const add = document.createElement('button');
-      add.type = 'button';
-      add.className = 'add';
-      add.textContent = '＋';
-      add.title = `在 ${monthDay(date)} 添加安排`;
-      add.addEventListener('click', () => openEditor(key, null));
-      stack.appendChild(add);
+    if (!list.length) {
+      const hint = document.createElement('p');
+      hint.className = 'empty';
+      hint.textContent = '空着';
+      stack.appendChild(hint);
     }
+
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'add';
+    add.textContent = '＋';
+    add.title = `在 ${monthDay(date)} 添加安排`;
+    add.addEventListener('click', () => openEditor(key, null));
+    stack.appendChild(add);
 
     day.appendChild(stack);
     week.appendChild(day);
@@ -388,18 +360,10 @@ function renderPhone() {
 
   const list = $('pList');
   list.textContent = '';
-  list.classList.toggle('dropping', dropMode);
 
-  const pool = visibleItems();
+  const pool = items;
   const dayItems = pool.filter((it) => it.date === phoneDate).sort(D.compareArrangements);
   const siblingsOf = siblingsFn(pool);
-
-  if (dropMode) {
-    for (const slot of D.SLOTS) {
-      list.appendChild(makeZone(phoneDate, slot, dayItems.filter((it) => it.slot === slot), siblingsOf));
-    }
-    return;
-  }
 
   if (!dayItems.length) {
     const empty = document.createElement('p');
@@ -459,6 +423,8 @@ function render() {
   renderHeader();
   renderWeek();
   renderPhone();
+  // 翻周/翻天会重建卡片，投放格得照新位置重算
+  if (drag && drag.active) buildZones();
 }
 
 /* ---------------- 编辑 ---------------- */
@@ -486,13 +452,35 @@ function openEditor(date, item) {
   $('delBtn').hidden = !item;
   $('err').hidden = true;
   $('editor').showModal();
-  setTimeout(() => $('fTitle').focus(), 40);
+  fitEditor();
+  setTimeout(() => { $('fTitle').focus(); fitEditor(); }, 40);
 }
 
 function closeEditor() {
   $('editor').close();
   editState = null;
 }
+
+/* 键盘弹起时布局视口不变（dvh 也不变），CSS 居中会把框底留在键盘底下。
+   改按 visualViewport 摆：算「看得见的那块」的中心，框就一直在键盘上方。 */
+function fitEditor() {
+  const ed = $('editor');
+  if (!ed.open) return;
+  const vv = window.visualViewport;
+  const w = vv ? vv.width : window.innerWidth;
+  const h = vv ? vv.height : window.innerHeight;
+  const x = vv ? vv.offsetLeft : 0;
+  const y = vv ? vv.offsetTop : 0;
+  ed.style.left = (x + w / 2) + 'px';
+  ed.style.top = (y + h / 2) + 'px';
+  ed.style.maxHeight = Math.max(160, h - 24) + 'px';
+}
+
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', fitEditor);
+  visualViewport.addEventListener('scroll', fitEditor);
+}
+window.addEventListener('resize', fitEditor);
 
 async function move(item, dir) {
   setBusy(true);
@@ -594,14 +582,14 @@ $('editor').addEventListener('click', (e) => {
 
 /* ---------------- 拖拽落位 ----------------
    Pointer Events 一套走鼠标、触屏、触控笔。落点决定时段，没有「非法落点」。
+   投放格是拖拽期间盖上去的一层，位置照原卡片算：列表不动，纸不长高，页不跳。
    松手先改界面再写服务端：跨境一来一回一两秒，等确认再动就像卡死。 */
 
 const FLIP_FIRST = 600;    // 贴边多久翻第一页
 const FLIP_REPEAT = 800;   // 之后每页的间隔，恒定不加速
+const HOLD_MS = 250;       // 触屏按住多久算「拿起」
+const HOLD_SLOP = 10;      // 待命期间允许的抖动，超了就当用户在滑页面
 
-let lastX = 0;
-let lastY = 0;
-let lastZone = null;
 let edgeTimer = 0;
 let edgeDir = 0;
 
@@ -632,13 +620,137 @@ function prefetchWeeks() {
   }
 }
 
+/* 投放格按原卡片的位置算：有卡的时段占它自己那几张卡的上下沿，空段插在邻居之间。
+   卡片不动，落点照样一眼可见。 */
+function bandsFor(date, box, cardEls, out) {
+  const boxRect = box.getBoundingClientRect();
+  const left = boxRect.left + 2;
+  const width = Math.max(24, boxRect.width - 4);
+  const top = boxRect.top + 4;
+  // 只剩一条安排时，三格会挤成一条缝；至少给每格一个指头的高度（不够就盖到纸外）
+  const bottom = Math.max(boxRect.bottom - 4, Math.min(window.innerHeight - 8, top + 3 * 46));
+
+  const filled = [];
+  for (const s of D.SLOTS) {
+    const cards = [...cardEls].filter((el) => { const it = itemOf.get(el); return it && it.slot === s; });
+    if (!cards.length) continue;
+    const a = cards[0].getBoundingClientRect();
+    const b = cards[cards.length - 1].getBoundingClientRect();
+    filled.push({ slot: s, i: D.SLOTS.indexOf(s), top: a.top - 2, bottom: b.bottom + 2 });
+  }
+
+  if (!filled.length) {
+    const h = (bottom - top) / 3;
+    D.SLOTS.forEach((s, i) => out.push({ date, slot: s, left, width, top: top + i * h, height: Math.max(24, h - 3) }));
+    return;
+  }
+
+  // 连续的几个空时段凑成一组、把剩余空间均分；不然它们会全叠在同一段空隙里
+  const GAP = 6;
+  const at = new Map(filled.map((f) => [f.slot, f]));
+  let cursor = top;
+  let i = 0;
+  while (i < D.SLOTS.length) {
+    const hit = at.get(D.SLOTS[i]);
+    if (hit) {
+      out.push({ date, slot: D.SLOTS[i], left, width, top: hit.top, height: hit.bottom - hit.top });
+      cursor = hit.bottom + GAP;
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < D.SLOTS.length && !at.has(D.SLOTS[j])) j++;
+    const next = j < D.SLOTS.length ? at.get(D.SLOTS[j]) : null;
+    const gBottom = next ? next.top - 4 : bottom;
+    const n = j - i;
+    const span = Math.max(0, gBottom - cursor);
+    // 命中区不小于 24px：手指落得住，比「不超出纸面」重要
+    const h = Math.max(24, Math.min(44, (span - (n - 1) * GAP) / n));
+    let t = cursor + Math.max(0, (span - (h * n + (n - 1) * GAP)) / 2);
+    for (let k = i; k < j; k++) {
+      out.push({ date, slot: D.SLOTS[k], left, width, top: t, height: h });
+      t += h + GAP;
+    }
+    cursor = t;
+    i = j;
+  }
+}
+
+function buildZones() {
+  clearZones();
+  const bands = [];
+  if (isNarrow()) {
+    const list = $('pList');
+    bandsFor(phoneDate, list, list.querySelectorAll('.card'), bands);
+  } else {
+    for (const day of $('week').querySelectorAll('.day')) {
+      const stack = day.querySelector('.stack');
+      bandsFor(day.dataset.date, stack, stack.querySelectorAll('.card'), bands);
+    }
+  }
+
+  zoneLayer = document.createElement('div');
+  zoneLayer.className = 'zone-layer';
+  for (const b of bands) {
+    const el = document.createElement('div');
+    el.className = 'zone z-' + b.slot;
+    el.dataset.date = b.date;
+    el.dataset.slot = b.slot;
+    el.style.left = b.left + 'px';
+    el.style.top = b.top + 'px';
+    el.style.width = b.width + 'px';
+    el.style.height = b.height + 'px';
+    const lab = document.createElement('span');
+    lab.className = 'zone-lab';
+    lab.textContent = D.SLOT_LABELS[b.slot];
+    el.appendChild(lab);
+    zoneLayer.appendChild(el);
+    zoneList.push({ date: b.date, slot: b.slot, el, left: b.left, top: b.top, width: b.width, height: b.height });
+  }
+  document.body.appendChild(zoneLayer);
+}
+
+function clearZones() {
+  if (zoneLayer) zoneLayer.remove();
+  zoneLayer = null;
+  zoneList = [];
+  hotZone = null;
+}
+
+// 取包含手指的那一格；两格重叠时取离手指中心更近的一格
+function zoneAt(x, y) {
+  let best = null;
+  let bestGap = Infinity;
+  for (const z of zoneList) {
+    if (x < z.left || x > z.left + z.width || y < z.top || y > z.top + z.height) continue;
+    const gap = Math.abs(y - (z.top + z.height / 2));
+    if (gap < bestGap) { bestGap = gap; best = z; }
+  }
+  return best;
+}
+
+// 落在某张卡上半＝插它前面，下半＝插它后面；只数同一天同一时段的卡
+function indexIn(date, slot, y) {
+  // 只看当前视图：另一套容器是 display:none，量出来的矩形全是 0
+  const scope = isNarrow() ? $('pList') : $('week');
+  let n = 0;
+  for (const el of scope.querySelectorAll('.card')) {
+    const it = itemOf.get(el);
+    if (!it || it.id === drag.item.id || it.date !== date || it.slot !== slot) continue;
+    const r = el.getBoundingClientRect();
+    if (y > r.top + r.height / 2) n++;
+  }
+  return n;
+}
+
+/* 只判「落在哪」，不算位次：位次要量每张卡的矩形，放到 pointermove 里会一直触发重排。
+   命中投放格时 zone 非空，松手那一下再按 y 算 index；落在周条上时 index 直接给出。 */
 function hitTest(x, y) {
   if (!drag) return null;
   const el = document.elementFromPoint(x, y);
-  if (!el) return null;
 
   // 手机：直接把卡丢到周条某天，时段不变，排到那天该段末尾
-  const chip = el.closest('.chip');
+  const chip = el && el.closest('.chip');
   if (chip) {
     const i = Array.prototype.indexOf.call($('pStrip').children, chip);
     if (i >= 0) {
@@ -649,19 +761,13 @@ function hitTest(x, y) {
     }
   }
 
-  const z = el.closest('.zone');
+  const z = zoneAt(x, y);
   if (!z) return null;
-
-  // 落在某张卡上半＝插它前面，下半＝插它后面
-  let index = 0;
-  for (const c of z.querySelectorAll('.card')) {
-    const r = c.getBoundingClientRect();
-    if (y > r.top + r.height / 2) index++; else break;
-  }
-  return { date: z.dataset.date, slot: z.dataset.slot, index, zone: z };
+  return { date: z.date, slot: z.slot, zone: z };
 }
 
 document.addEventListener('pointerdown', (e) => {
+  if (drag) return;   // 一次只认一根手指，第二根不打断已经在拖的那张
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   const card = e.target.closest('.card');
   if (!card || e.target.closest('.acts, .tick')) return;
@@ -669,7 +775,7 @@ document.addEventListener('pointerdown', (e) => {
   if (!item) return;
 
   drag = {
-    item, card,
+    item, card, pointerId: e.pointerId,
     x0: e.clientX, y0: e.clientY,
     active: false,
     armed: e.pointerType !== 'touch',
@@ -678,23 +784,22 @@ document.addEventListener('pointerdown', (e) => {
   };
   // 触屏要按住才拿起，否则一点就开始拖，列表滚不动
   if (e.pointerType === 'touch') {
-    drag.timer = setTimeout(() => { if (drag) drag.armed = true; }, 180);
+    drag.timer = setTimeout(() => { if (drag) drag.armed = true; }, HOLD_MS);
   }
 });
 
 document.addEventListener('pointermove', (e) => {
-  if (!drag) return;
-  lastX = e.clientX;
-  lastY = e.clientY;
+  if (!drag || e.pointerId !== drag.pointerId) return;
 
   if (!drag.active) {
     const dx = e.clientX - drag.x0;
     const dy = e.clientY - drag.y0;
     if (!drag.armed) {
-      if (Math.hypot(dx, dy) > 6) { clearTimeout(drag.timer); drag = null; }
+      // 还没拿起就滑开了：这是滚动，把这次按压整个放掉
+      if (Math.hypot(dx, dy) > HOLD_SLOP) { clearTimeout(drag.timer); drag = null; }
       return;
     }
-    if (Math.hypot(dx, dy) < 5) return;
+    if (Math.hypot(dx, dy) < 4) return;
     startDrag();
   }
 
@@ -706,19 +811,21 @@ document.addEventListener('pointermove', (e) => {
   checkEdge(e.clientX);
 }, { passive: true });
 
+// 拿起之后由这里接管：第一次移动就挡掉浏览器滚动，触屏才拖得动
 document.addEventListener('touchmove', (e) => {
-  if (drag && drag.active) e.preventDefault();
+  if (drag && (drag.active || drag.armed)) e.preventDefault();
 }, { passive: false });
 
 document.addEventListener('pointerup', (e) => {
-  if (!drag) return;
+  if (!drag || e.pointerId !== drag.pointerId) return;
   clearTimeout(drag.timer);
   if (!drag.active) { drag = null; return; }
 
   const t = hitTest(e.clientX, e.clientY);
   if (t) {
-    D.placeItem(items, drag.item.id, t.date, t.slot, t.index);
-    sendPlace(drag.item.id, t.date, t.slot, t.index);
+    const index = t.zone ? indexIn(t.date, t.slot, e.clientY) : t.index;
+    D.placeItem(items, drag.item.id, t.date, t.slot, index);
+    sendPlace(drag.item.id, t.date, t.slot, index);
   } else if (edgeAt(e.clientX)) {
     toast('边缘只翻页，不落位');
   }
@@ -727,13 +834,19 @@ document.addEventListener('pointerup', (e) => {
   endDrag();
 });
 
-document.addEventListener('pointercancel', () => {
-  if (drag && drag.active) { lastDropAt = Date.now(); endDrag(); }
-  else drag = null;
+document.addEventListener('pointercancel', (e) => {
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  if (drag.active) { lastDropAt = Date.now(); endDrag(); }
+  else { clearTimeout(drag.timer); drag = null; }
 });
 
 document.addEventListener('pointerleave', () => { if (drag && drag.active) stopEdge(); });
 window.addEventListener('blur', stopEdge);
+
+// 拖拽期间页面还是可能被滚走（滚轮、第二根手指），格子得跟着卡片重算
+const refitZones = () => { if (drag && drag.active) buildZones(); };
+window.addEventListener('scroll', refitZones, { passive: true });
+window.addEventListener('resize', refitZones);
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && drag && drag.active) endDrag();
@@ -745,6 +858,10 @@ function startDrag() {
   drag.offsetX = drag.x0 - rect.left;
   drag.offsetY = drag.y0 - rect.top;
 
+  // 触屏指针默认捕获在这张卡上：卡一被重建，捕获就没了、接着来的是 pointercancel。
+  // 改捕到 body，翻周重建卡片也照常跟手。
+  try { document.body.setPointerCapture(drag.pointerId); } catch (_) {}
+
   const g = drag.card.cloneNode(true);
   for (const n of g.querySelectorAll('.acts, .tick')) n.remove();
   g.className = drag.card.className + ' drag-ghost';
@@ -754,30 +871,32 @@ function startDrag() {
   document.body.appendChild(g);
   drag.ghost = g;
 
+  drag.card.classList.add('drag-src');
   document.body.classList.add('dragging');
-  dropMode = true;
   prefetchWeeks();
-  render();
+  buildZones();
 }
 
 function endDrag() {
   if (drag && drag.ghost) drag.ghost.remove();
-  clearTimeout(drag && drag.timer);
+  if (drag) {
+    clearTimeout(drag.timer);
+    try { document.body.releasePointerCapture(drag.pointerId); } catch (_) {}
+  }
   drag = null;
-  lastZone = null;
+  clearZones();
   stopEdge();
   document.body.classList.remove('dragging');
-  dropMode = false;
   render();
 }
 
 function highlight(x, y) {
   const t = hitTest(x, y);
   const z = t ? t.zone : null;
-  if (z === lastZone) return;
-  if (lastZone) lastZone.classList.remove('on');
-  if (z) z.classList.add('on');
-  lastZone = z;
+  if (z === hotZone) return;
+  if (hotZone) hotZone.el.classList.remove('on');
+  if (z) z.el.classList.add('on');
+  hotZone = z;
 }
 
 function edgeAt(x) {
