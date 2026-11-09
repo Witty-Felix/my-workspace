@@ -15,7 +15,7 @@ ok()  { printf '  ✓ %s\n' "$*"; }
 echo "== 1. 语法检查 =="
 while IFS= read -r f; do
   if node --check "$f" >/dev/null 2>&1; then ok "$f"; else bad "$f 语法错误"; node --check "$f" 2>&1 | head -3 | sed 's/^/      /'; fi
-done < <(find . -name node_modules -prune -o -name '*.js' -print | sed 's|^\./||' | sort)
+done < <(find . -name node_modules -prune -o \( -name '*.js' -o -name '*.mjs' \) -print | sed 's|^\./||' | sort)
 
 echo
 echo "== 2. 镜像必须打进去的东西 =="
@@ -58,7 +58,7 @@ echo "== 4. 行内语句（大括号后不要挤代码）==="
 # 所以只在「大括号后跟两个以上空格再接内容」时报警——那几乎总是丢了换行。
 inlined="$(while IFS= read -r f; do
   awk 'match($0, /\{[ \t][ \t]+[^ \t]/) { printf "%s:%d\n", FILENAME, FNR }' "$f"
-done < <(find . -name node_modules -prune -o -name '*.js' -print | sed 's|^\./||' | sort))"
+done < <(find . -name node_modules -prune -o \( -name '*.js' -o -name '*.mjs' \) -print | sed 's|^\./||' | sort))"
 if [ -n "$inlined" ]; then
   bad "有大括号后直接挤了语句的行"
   printf '%s\n' "$inlined" | sed 's/^/      /'
