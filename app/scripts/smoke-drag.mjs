@@ -6,118 +6,19 @@
 // 说明：本地跑，不进 CI —— CI 装浏览器会把零依赖的流水线变脆。
 //       本脚本自己起服务（临时 data 目录）与浏览器，跑完都清掉。
 
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { findBrowser, touchFor } from './lib/cdp.mjs';
+import { startHarness, bleedCheck, sleep } from './lib/harness.mjs';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const APP = path.resolve(HERE, '..');
-const WORK = path.join(APP, '.drag-smoke');
-const DATA = path.join(WORK, 'data');
 const PORT = Number(process.env.DRAG_PORT || 8191);
 
 const fail = (m) => { console.error(`  ✗ ${m}`); failures++; };
 const ok = (m) => console.log(`  ✓ ${m}`);
 let failures = 0;
 
-if (typeof WebSocket !== 'function') {
-  console.error('需要 Node 22+（内置 WebSocket）。当前 ' + process.version);
-  process.exit(2);
-}
-
-const browser = findBrowser();
-if (!browser) {
-  console.error('没找到 Chrome/Edge，无法验证拖拽。设 CHROME_BIN 指向可执行文件后重试。');
-  process.exit(2);
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const rmrf = (p) => { for (let i = 0; i < 5; i++) { try { fs.rmSync(p, { recursive: true, force: true }); return; } catch (_) { /* Windows 句柄还没放 */ } } };
-
-rmrf(WORK);
-fs.mkdirSync(DATA, { recursive: true });
-spawn(process.execPath, [path.join(HERE, 'lib', 'fixture.js'), path.join(DATA, 'data.json')], { stdio: 'ignore' });
-
-const server = spawn(process.execPath, ['server.js'], {
-  cwd: APP,
-  env: { ...process.env, PORT: String(PORT), AUTH: 'off', DATA_DIR: DATA },
-  stdio: 'ignore',
-});
-const profile = path.join(WORK, 'profile');
-const chrome = spawn(browser, [
-  '--headless=new', '--disable-gpu', '--no-first-run',
-  '--remote-debugging-port=0',
-  `--user-data-dir=${profile}`,
-  '--window-size=1440,900',
-  `http://127.0.0.1:${PORT}/`,
-], { stdio: 'ignore' });
-
-let ws = null;
-const stop = () => {
-  try { ws?.close(); } catch (_) {}
-  try { chrome.kill(); } catch (_) {}
-  try { server.kill(); } catch (_) {}
-};
-process.on('exit', () => { stop(); });
-
+let h = null;
 try {
-  // 等服务
-  for (let i = 0; i < 60; i++) {
-    try { if ((await fetch(`http://127.0.0.1:${PORT}/api/health`)).ok) break; } catch (_) {}
-    await sleep(200);
-  }
-  await sleep(400);
-
-  // 等浏览器开口：端口写在 DevToolsActivePort 第一行
-  let dbgPort = 0;
-  for (let i = 0; i < 60; i++) {
-    const f = path.join(profile, 'DevToolsActivePort');
-    if (fs.existsSync(f)) { dbgPort = Number(fs.readFileSync(f, 'utf8').split('\n')[0]); if (dbgPort) break; }
-    await sleep(200);
-  }
-  if (!dbgPort) throw new Error('浏览器没开调试端口');
-
-  let target = null;
-  for (let i = 0; i < 40; i++) {
-    const list = await (await fetch(`http://127.0.0.1:${dbgPort}/json/list`)).json();
-    target = list.find((t) => t.type === 'page' && t.url.includes(`:${PORT}`));
-    if (target) break;
-    await sleep(200);
-  }
-  if (!target) throw new Error('拿不到页面调试目标');
-
-  ws = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((res, rej) => {
-    ws.addEventListener('open', res, { once: true });
-    ws.addEventListener('error', rej, { once: true });
-  });
-
-  let seq = 0;
-  const pending = new Map();
-  const errors = [];
-  ws.addEventListener('message', (e) => {
-    const m = JSON.parse(e.data);
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
-    if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.text);
-  });
-  const send = (method, params = {}) => new Promise((res) => {
-    const id = ++seq;
-    pending.set(id, res);
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-  const js = async (expression) => {
-    const r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-    if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.text);
-    return r.result?.result?.value;
-  };
-  const mouse = (type, x, y) => send('Input.dispatchMouseEvent', {
-    type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1,
-  });
-
-  await send('Runtime.enable');
-  await send('Page.enable');
+  h = await startHarness({ work: '.drag-smoke', port: PORT, windowSize: '1440,900' });
+  const { send, js, mouse, touch, errors } = h;
+  await h.ready();
   await sleep(1200);
 
   const days = await js(`[...document.querySelectorAll('.day')].map(d => d.dataset.date)`);
@@ -262,12 +163,19 @@ try {
       body: JSON.stringify({ date: tDay, slot, title, note: '' }),
     });
   }
+  // 把下午塞到溢出的量级：格子均分时这里会压到「晚上」，按内容分高时它自己长高。
+  // 没有这份压力，下面的越界断言就是空跑 —— 少几张卡永远测不出挤压。
+  for (let k = 0; k < 5; k++) {
+    await fetch(`http://127.0.0.1:${PORT}/api/items`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: tDay, slot: 'pm', title: '压格夹具' + k, note: '占位' }),
+    });
+  }
   await send('Page.reload', {});
   await sleep(1600);
   await js(`document.getElementById('pStrip').children[4].click()`);
   await sleep(300);
 
-  const touch = touchFor(send);
   const atCard = (title) => js(`(() => {
     const c = [...document.querySelectorAll('#pList .card')].find(x => x.querySelector('.title').textContent === ${JSON.stringify(title)});
     if (!c) return null;
@@ -308,8 +216,31 @@ try {
     const pm = await atZone('pm');
     if (!pm) { await touch('touchCancel', 0, 0); fail('触屏：下午格没找到'); }
     else {
-      // 流内三格：拖拽态列表重排过，静止态卡坐标已失效，直接落 pm 格上半（位次 0）
-      const pmRect = await js(`(() => { const z = document.querySelector('.phone-list.dropping .zone[data-slot="pm"]'); const r = z.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height * 0.25 }; })()`);
+      // 拖拽态的几何底线：卡片不得越过自己格子的下沿（越过就是画到下一格上）。
+      // 2026-11-10 的「晚上那筐被盖住」正是这一条漏检，靠肉眼才发现。
+      const b = await bleedCheck(js, 'body.dragging');
+      if (b.over === 0) ok(`触屏：三格各装自己的卡，无一张越界（${b.total} 张）`);
+      else fail(`触屏：${b.over}/${b.total} 张卡片越出自己的格，会盖住下一格`);
+
+      // 空白时段保底 96px：纯落点要比卡片格更好丢
+      const emptyH = await js(`(() => {
+        const z = document.querySelector('.phone-list.dropping .zone.empty');
+        return z ? Math.round(z.getBoundingClientRect().height) : null;
+      })()`);
+      if (emptyH === null) fail('触屏：没找到空白时段格');
+      else if (emptyH >= 96) ok(`触屏：空白时段保底 ${emptyH}px`);
+      else fail(`触屏：空白时段只有 ${emptyH}px，低于 96px 保底`);
+
+      // 流内三格：拖拽态列表重排过，静止态卡坐标已失效。瞄「第一张卡的上四分之一」而不是
+      // 格子百分比 —— 格子按内容长高后，25% 会落到第二张卡上，「插到最前」就测不出来了。
+      const pmRect = await js(`(() => {
+        const z = document.querySelector('.phone-list.dropping .zone[data-slot="pm"]');
+        const c = z && z.querySelector('.card');
+        if (!z || !c) return null;
+        const zr = z.getBoundingClientRect();
+        const cr = c.getBoundingClientRect();
+        return { x: zr.left + zr.width / 2, y: cr.top + Math.min(6, cr.height * 0.2) };
+      })()`);
       const target = pmRect || pm;
       await touch('touchMove', target.x, target.y);
       await sleep(100);
@@ -321,8 +252,7 @@ try {
       if (jia?.date === tDay && jia?.slot === 'pm') ok('触屏：松手落到下午');
       else fail(`触屏落点不对：${jia?.date} ${jia?.slot}`);
       if (jia && yi && jia.order < yi.order) ok('触屏：落在卡片上半 → 位次插到前面');
-      else fail(`触屏位次不对：甲=${jia?.order} 乙=${yi?.order}`);
-      const rest = await js(`document.querySelectorAll('.drag-ghost, .drag-anchor').length`);
+      else fail(`触屏位次不对：甲=${jia?.order} 乙=${yi?.order}`);      const rest = await js(`document.querySelectorAll('.drag-ghost, .drag-anchor').length`);
       if (rest === 0) ok('触屏：松手后不留残影');
       else fail(`触屏：松手后还剩 ${rest} 个节点`);
     }
@@ -445,9 +375,7 @@ try {
 } catch (e) {
   fail(e.message);
 } finally {
-  stop();
-  await sleep(400);
-  rmrf(WORK);
+  if (h) await h.stop();
 }
 
 console.log('');

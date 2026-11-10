@@ -16,6 +16,10 @@ Issues 与 spec 存放在 GitHub Issues（`Witty-Felix/my-workspace`），通过
 
 single-context 布局：根目录 `GLOSSARY.md` + `docs/adr/`。See `docs/agents/domain.md`.
 
+### 交互原型
+
+`design/prototypes/` 放一次性原型（多方案对比 + 量尺），不进版本库（`.gitignore` 已忽略）。ADR 里提到「原型里有这行」时，同一目录名要能对上；原型验证完就随会话丢弃，结论只留在 ADR。
+
 改**拖拽、落位、触屏交互**前，先读 `docs/adr/0006-drag-place.md`（该行为的三次修订都在里面，含触屏 pointercancel 的根因与约束）。
 
 ### 多轮需求落地

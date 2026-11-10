@@ -8,3 +8,8 @@ app/.smoke/
 # 设计过程产物：原型 HTML 与渲染截图都是可再生的，不进仓库
 design/
 out/
+# 交互自检的临时工作区（跑完自删，崩溃时会残留）
+app/.*-smoke/
+# 原型发布后本机生成的应用注册与包
+.wbapp_*.genie
+.workbuddy/applications.yaml

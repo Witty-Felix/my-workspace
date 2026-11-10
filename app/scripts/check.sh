@@ -41,6 +41,7 @@ icrlf="$(cd "$ROOT" && git ls-files --eol | awk '$1 != "i/lf" {print $NF}')"
 if [ -n "$wcrlf" ]; then
   bad "工作区不是 LF（打包上传的就是它，CRLF 会带进镜像）"
   printf '%s\n' "$wcrlf" | sed 's/^/      /'
+  printf '      修法：node -e "const f=require(\x27fs\x27);process.argv.slice(1).forEach(p=>f.writeFileSync(p,f.readFileSync(p,\x27utf8\x27).replace(/\\r\\n/g,\x27\\n\x27)))" 上述文件\n'
 else
   ok "工作区全部 LF"
 fi

@@ -2,123 +2,30 @@
 // 完成态自检：真服务 + 真浏览器。验接口的稀疏/幂等/校验，和界面上的勾选、刷新、取消、
 // 键盘、已完成卡仍可拖。本地跑，不进 CI —— 和 smoke-drag 一样自己起服务与浏览器。
 // 用法：npm run smoke:done
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { findBrowser, touchFor } from './lib/cdp.mjs';
+import { startHarness, sleep } from './lib/harness.mjs';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const APP = path.resolve(HERE, '..');
-const WORK = path.join(APP, '.done-smoke');
-const DATA = path.join(WORK, 'data');
-const PROFILE = path.join(WORK, 'profile');
 const PORT = Number(process.env.DONE_PORT || 8193);
-const BASE = `http://127.0.0.1:${PORT}`;
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const rmrf = (p) => { for (let i = 0; i < 5; i++) { try { fs.rmSync(p, { recursive: true, force: true }); return; } catch (_) { /* Windows 句柄还没放 */ } } };
 
 let bad = 0;
 const ok = (m) => console.log('  ✓ ' + m);
 const fail = (m) => { bad++; console.log('  ✗ ' + m); };
 
-const browser = findBrowser();
-if (!browser) { console.error('没找到 Chrome/Edge，无法验证完成态'); process.exit(2); }
-if (typeof WebSocket !== 'function') { console.error('需要 Node 22+（内置 WebSocket）'); process.exit(2); }
-
-rmrf(WORK);
-fs.mkdirSync(DATA, { recursive: true });
-spawn(process.execPath, [path.join(HERE, 'lib', 'fixture.js'), path.join(DATA, 'data.json')], { stdio: 'ignore' });
-
-const server = spawn(process.execPath, ['server.js'], {
-  cwd: APP, env: { ...process.env, PORT: String(PORT), AUTH: 'off', DATA_DIR: DATA }, stdio: 'ignore',
-});
-const chrome = spawn(browser, [
-  '--headless=new', '--disable-gpu', '--no-first-run', '--hide-scrollbars',
-  '--remote-debugging-port=0', `--user-data-dir=${PROFILE}`,
-  '--window-size=1440,1000', `http://127.0.0.1:${PORT}/`,
-], { stdio: 'ignore' });
-
-let ws = null;
-const stop = () => {
-  try { ws?.close(); } catch (_) {}
-  try { chrome.kill(); } catch (_) {}
-  try { server.kill(); } catch (_) {}
-};
-
-const call = async (method, p, body) => {
-  const r = await fetch(BASE + p, body ? {
-    method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  } : { method });
-  let j = null;
-  try { j = await r.json(); } catch (_) {}
-  return { status: r.status, j };
-};
-
+let h = null;
 try {
-  for (let i = 0; i < 60; i++) {
-    try { if ((await fetch(BASE + '/api/health')).ok) break; } catch (_) {}
-    await sleep(200);
-  }
-  if (!(await fetch(BASE + '/api/health').catch(() => null))) throw new Error('服务没起来');
+  h = await startHarness({ work: '.done-smoke', port: PORT, windowSize: '1440,1000' });
+  const { send, js, mouse, clickEl, rectOf, errors } = h;
+  const BASE = h.BASE;
+  await h.ready();
 
-  let dbg = 0;
-  for (let i = 0; i < 60; i++) {
-    const f = path.join(PROFILE, 'DevToolsActivePort');
-    if (fs.existsSync(f)) { dbg = Number(fs.readFileSync(f, 'utf8').split('\n')[0]); if (dbg) break; }
-    await sleep(200);
-  }
-  if (!dbg) throw new Error('浏览器没开调试端口');
-
-  let target = null;
-  for (let i = 0; i < 40; i++) {
-    const list = await (await fetch(`http://127.0.0.1:${dbg}/json/list`)).json();
-    target = list.find((t) => t.type === 'page' && t.url.includes(`:${PORT}`));
-    if (target) break;
-    await sleep(200);
-  }
-  if (!target) throw new Error('拿不到页面调试目标');
-
-  ws = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((res, rej) => {
-    ws.addEventListener('open', res, { once: true });
-    ws.addEventListener('error', rej, { once: true });
-  });
-
-  let seq = 0;
-  const pending = new Map();
-  const errors = [];
-  ws.addEventListener('message', (e) => {
-    const m = JSON.parse(e.data);
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
-    if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.text);
-  });
-  const send = (method, params = {}) => new Promise((res) => {
-    const id = ++seq;
-    pending.set(id, res);
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-  const js = async (expr) => {
-    const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
-    if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.text);
-    return r.result?.result?.value;
-  };
-  const mouse = (type, x, y, buttons) => send('Input.dispatchMouseEvent', {
-    type, x, y, button: 'left', buttons: buttons ?? (type === 'mouseReleased' ? 0 : 1), clickCount: 1,
-  });
-  const rectOf = (expr) => js(`(() => { const el = ${expr}; if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
-  const clickEl = async (expr) => {
-    const p = await rectOf(expr);
-    if (!p) return false;
-    await mouse('mousePressed', p.x, p.y);
-    await mouse('mouseReleased', p.x, p.y);
-    await sleep(320);
-    return true;
+  const call = async (method, p, body) => {
+    const r = await fetch(BASE + p, body ? {
+      method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    } : { method });
+    let j = null;
+    try { j = await r.json(); } catch (_) {}
+    return { status: r.status, j };
   };
 
-  await send('Runtime.enable');
-  await send('Page.enable');
   await sleep(1400);
 
   console.log('== 接口 ==');
@@ -202,7 +109,7 @@ try {
 
   // 触屏一遍：鼠标事件不会触发隐式指针捕获，触屏的问题只有 touch 事件能照出来
   console.log('== 触屏：已划掉的卡仍可拖 ==');
-  const to = touchFor(send);
+  const to = h.touch;
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await send('Page.reload');
@@ -249,9 +156,7 @@ try {
   console.error('  ✗ 自检失败：', e.message);
   bad++;
 } finally {
-  stop();
-  await sleep(400);
-  rmrf(WORK);
+  if (h) await h.stop();
 }
 
 console.log(bad ? '\n✗ 完成态自检未通过' : '\n✓ 完成态自检全部通过');

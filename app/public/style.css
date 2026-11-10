@@ -1175,8 +1175,8 @@ body.busy .stage{opacity:.5;pointer-events:none}
   transition:color 120ms ease;
 }
 
-/* 格内卡片归位：不歪斜 */
-.zone .card{transform:none}
+/* 格内卡片归位：不歪斜。卡片也不参与压缩 —— 格子高了就住进去，不把卡片挤扁。 */
+.zone .card{transform:none;flex:0 0 auto}
 
 .zone.on{border-color:var(--line)}
 .zone.on .zone-lab{color:var(--ink)}
@@ -1184,23 +1184,29 @@ body.busy .stage{opacity:.5;pointer-events:none}
 .zone.on.z-pm{background:rgba(208,124,66,.13)}
 .zone.on.z-eve{background:rgba(124,116,188,.14)}
 
-/* 桌面：拖拽态整周纸面拉高，空周的三格也有大地方住 */
+/* 桌面：拖拽态三格不再瓜分列高。格子高 = max(自身内容, 保底)，内容多的格
+   按自己高度长，所以不会压到下一格。空白时段保底 96px（64 × 1.5），好丢。
+   整列都没有安排时没有对照组，三格均分撑满，纸面下方不留死白。 */
 @media (min-width:901px){
   body.dragging .sheet{min-height:640px}
   body.dragging .day{height:100%}
   body.dragging .stack{flex:1 1 auto}
+  body.dragging .zone{flex:0 0 auto}
+  body.dragging .zone.empty{min-height:96px}
+  body.dragging .stack.all-empty .zone{flex:1 1 0}
 }
 
-/* 手机：拖拽态当天列表撑满视口剩余高度（空天也有三格大框）。
-   .phone-paper 平时按内容长；stretch 让它变成纵向 flex 并撑高，
-   列表才能吃掉剩余高度传给三个格子。格子保底 72px，纸再矮也不塌。 */
+/* 手机：与桌面同一条规则。.phone-paper.stretch 把纸撑到至少一屏，
+   空天也有地方落；内容超长则纸跟着长。 */
 .phone-paper.stretch{
   display:flex;
   flex-direction:column;
   min-height:calc(100dvh - 220px);
 }
 .phone-list.dropping{flex:1 1 auto}
-.phone-list.dropping .zone{flex:1 1 0;min-height:72px}
+.phone-list.dropping .zone{flex:0 0 auto}
+.phone-list.dropping .zone.empty{min-height:96px}
+.phone-list.dropping.all-empty .zone{flex:1 1 0}
 
 body.dragging{
   cursor:grabbing;

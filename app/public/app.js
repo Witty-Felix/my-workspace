@@ -317,6 +317,8 @@ function renderWeek() {
       for (const slot of D.SLOTS) {
         stack.appendChild(zoneEl(key, slot, list.filter((it) => it.slot === slot), siblingsOf));
       }
+      // 整列没有安排时，三格均分撑满列高 —— 否则纸面下半截留一片死白
+      if (!list.length) stack.classList.add('all-empty');
     } else {
       list.forEach((it, k) => stack.appendChild(makeCard(it, siblingsOf, k)));
 
@@ -345,6 +347,9 @@ function zoneEl(date, slot, list, siblingsOf) {
   lab.className = 'zone-lab';
   lab.textContent = D.SLOT_LABELS[slot];
   z.appendChild(lab);
+
+  // 空白时段加高 0.5 倍：这格没有安排，纯粹是落点，要比卡片格更好丢
+  if (!list.length) z.classList.add('empty');
 
   list.forEach((it) => z.appendChild(makeCard(it, siblingsOf)));
   return z;
@@ -385,8 +390,11 @@ function renderPhone() {
     for (const slot of D.SLOTS) {
       list.appendChild(zoneEl(phoneDate, slot, dayItems.filter((it) => it.slot === slot), siblingsOf));
     }
+    // 和桌面同一条规则：当天没有安排时三格均分撑满，不留死白
+    list.classList.toggle('all-empty', !dayItems.length);
     return;
   }
+  list.classList.remove('all-empty');
 
   let lastSlot = null;
   for (const it of dayItems) {
