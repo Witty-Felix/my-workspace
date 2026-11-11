@@ -11,6 +11,11 @@
      port        端口（被占用时换一个）
      windowSize  '宽,高'
      fixture     是否造夹具，默认 true
+     emptyData   true 时写一个空库（items: []）而不是造夹具
+     emulate     传 { width, height, mobile } 时用 CDP Emulation 定视口。
+                 Windows 显示缩放会放大 --window-size（390 会变 492），
+                 Chromium 无头还有最小窗口宽度，靠 windowSize 收敛不了，
+                 要精确的窄视口必须走 Emulation。
 */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -30,7 +35,7 @@ export const rmrf = (p) => {
   }
 };
 
-export async function startHarness({ work, port, windowSize = '1440,900', fixture = true } = {}) {
+export async function startHarness({ work, port, windowSize = '1440,900', fixture = true, emptyData = false, emulate = null } = {}) {
   if (typeof WebSocket !== 'function') throw new Error(`需要 Node 22+（内置 WebSocket）。当前 ${process.version}`);
   const browser = findBrowser();
   if (!browser) throw new Error('没找到 Chrome/Edge。设 CHROME_BIN 指向可执行文件后重试。');
@@ -42,7 +47,9 @@ export async function startHarness({ work, port, windowSize = '1440,900', fixtur
 
   rmrf(WORK);
   fs.mkdirSync(DATA, { recursive: true });
-  if (fixture) {
+  if (emptyData) {
+    fs.writeFileSync(path.join(DATA, 'data.json'), JSON.stringify({ version: 1, items: [] }), 'utf8');
+  } else if (fixture) {
     spawn(process.execPath, [path.join(HERE, 'fixture.js'), path.join(DATA, 'data.json')], { stdio: 'ignore' });
   }
 
@@ -149,6 +156,17 @@ export async function startHarness({ work, port, windowSize = '1440,900', fixtur
     send, js, mouse, touch, rectOf, clickEl, errors,
     stop,
     async ready() {
+      // 精确视口必须在页面开始渲染前设好，否则媒体查询先按物理窗口算了一遍
+      if (emulate) {
+        await send('Emulation.setDeviceMetricsOverride', {
+          width: emulate.width,
+          height: emulate.height,
+          deviceScaleFactor: 1,
+          mobile: emulate.mobile ?? emulate.width <= 900,
+        });
+        await send('Page.reload', { ignoreCache: true });
+        await sleep(900);
+      }
       await send('Runtime.enable');
       await send('Page.enable');
     },

@@ -13,7 +13,9 @@
     "deploy": "bash scripts/deploy.sh",
     "smoke:drag": "node scripts/smoke-drag.mjs",
     "smoke:done": "node scripts/smoke-done.mjs",
-    "smoke:plan": "node scripts/smoke-plan.mjs"
+    "smoke:plan": "node scripts/smoke-plan.mjs",
+    "smoke:plan-mobile": "node scripts/smoke-plan-mobile.mjs",
+    "shot": "node scripts/shot.mjs"
   },
   "dependencies": {
     "express": "^4.19.2"

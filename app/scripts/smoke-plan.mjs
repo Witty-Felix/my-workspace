@@ -14,7 +14,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { findBrowser, touchFor } from './lib/cdp.mjs';
-import { layoutCheck, reportLayout } from './lib/layout-check.mjs';
+import { layoutCheck, reportLayout, checkPlanConsistency, reportPlanConsistency } from './lib/layout-check.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -375,6 +375,9 @@ const delVisible = await js(`(() => {
 })()`);
 if (Number(delVisible) > 0.2) ok(`触屏：删除键常显（opacity ${delVisible}），手指能点到`);
 else bad(`触屏：删除键被 hover 藏起来了（opacity ${delVisible}）`);
+
+// 渲染条目数必须与数据一致（写操作漏重画会在这里露出来）
+reportPlanConsistency(await checkPlanConsistency(js), ok, bad);
 
 // 布局体检：图标尺寸、容器高度、命中区。逐字 DOM 比对看不见这些
 const layoutFindings = await layoutCheck(js, [

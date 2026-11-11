@@ -65,14 +65,41 @@ export const layoutCheck = async (js, clickables = []) => js(`(() => {
   return out;
 })()`);
 
-/* 把体检结果按人话打出来，返回是否有问题 */
+/* 把手绘体检结果按人话打出来，返回是否有问题 */
 export const reportLayout = (findings, ok, bad) => {
   if (!findings || !findings.length) { ok('布局体检：图标尺寸、容器高度、命中区都正常'); return false; }
   for (const f of findings.slice(0, 8)) {
     if (f.kind === 'icon-too-big') bad(`图标超大：${f.what} 是 ${f.size}（SVG 缺宽高？）`);
     else if (f.kind === 'collapsed') bad(`容器塌陷：${f.what} 高度 ${f.size}`);
+    else if (f.kind === 'row-mismatch') bad(`两端条目数不一致：${f.what}`);
     else bad(`命中区偏小：${f.what} 是 ${f.size}（应 ≥24）`);
   }
   if (findings.length > 8) bad(`……另有 ${findings.length - 8} 处`);
   return true;
+};
+
+/* 两端一致性：同一份数据渲染在两处时，节点数必须相等。
+   2026-11-11 手机端周规划有四个 bug（删除不消失、重复建条、空条残留、Esc 不撤销），
+   根因全是「写操作只重画了桌面浮窗」。逐条测太慢，量一下数量就能一次抓住。
+
+   注意：桌面浮窗只在打开时渲染，所以调用前要先把浮窗打开，否则左边恒为 0。 */
+export const checkPlanConsistency = async (js) => js(`(() => {
+  const pw = document.querySelectorAll('.pw-row').length;
+  const m = document.querySelectorAll('.mrow').length;
+  const pwOpen = !!document.querySelector('.pw');
+  const narrow = window.matchMedia('(max-width:900px)').matches;
+  return { pw, m, pwOpen, narrow, dataLen: (typeof plan !== 'undefined' ? plan.length : -1) };
+})()`);
+
+/* 只比「当前视口下真正会渲染的那一处」：
+   桌面浮窗只在打开时渲染，手机整页只在窄屏渲染。
+   比不该出现的那一处恒为 0，会天天误报。 */
+export const reportPlanConsistency = (r, ok, bad) => {
+  if (!r || r.dataLen < 0) { bad('读不到 plan 数据，无法做两端一致性检查'); return; }
+  const bads = [];
+  if (r.pwOpen && r.pw !== r.dataLen) bads.push(`浮窗 ${r.pw} 条 ≠ 数据 ${r.dataLen} 条（写操作没重画浮窗）`);
+  if (r.narrow && r.m !== r.dataLen) bads.push(`手机端 ${r.m} 条 ≠ 数据 ${r.dataLen} 条（写操作没重画手机端）`);
+  if (bads.length) { bads.forEach((b) => bad(b)); return; }
+  const which = [r.pwOpen ? `浮窗 ${r.pw}` : null, r.narrow ? `手机 ${r.m}` : null].filter(Boolean).join(' / ');
+  ok(`渲染条目数与数据一致（数据 ${r.dataLen}${which ? '，' + which : ''}）`);
 };

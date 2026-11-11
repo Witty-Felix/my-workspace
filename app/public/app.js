@@ -35,6 +35,61 @@ let items = [];
 let plan = [];
 let phoneDate = TODAY;
 let editState = null;
+// 手机上「规划 / 当天」两页，桌面不用这个值（桌面用顶栏按钮开关浮窗）
+let phonePage = 'plan';
+
+// 最近一次「退出编辑」的时间。点外面要据此分辨：这一下是退出编辑，还是关窗。
+// 浏览器的 focusout 先于 pointerup 执行，等点到 pointerup 时 editId 已清空，光看它分不出来。
+let justEditedAt = 0;
+
+/* 点按与滑动的分界：手指移动超过这个距离（CSS px）就判为滑动。
+   手机上的滑动页面必然先触发 pointerdown —— 若在 pointerdown 就进编辑，
+   手指一擦过某行就开编辑并弹键盘，页面再也滚不动。
+   所以按下只记起点，抬起时量位移。10px 常见取值；700ms 以上按住也不当点击。 */
+const TAP_SLOP = 10;
+const TAP_HOLD = 700;
+
+/* 给一个元素挂「真正的点击」：位移或时长超限就不算，交给滚动。
+   桌面与手机共用同一套阈值，免得两边手感不一致。 */
+function onTap(el, handler, skipSel) {
+  let down = null;
+  el.addEventListener('pointerdown', (e) => {
+    if (skipSel && e.target.closest(skipSel)) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    down = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now() };
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!down || e.pointerId !== down.id) return;
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > TAP_SLOP) down = null;
+  });
+  el.addEventListener('pointerup', (e) => {
+    if (!down || e.pointerId !== down.id) return;
+    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+    const held = Date.now() - down.t;
+    down = null;
+    if (moved > TAP_SLOP || held > TAP_HOLD) return;
+    handler(e);
+  });
+  el.addEventListener('pointercancel', () => { down = null; });
+}
+
+/* 点空白 = 真正的点击落在没有内容的地方：同样要过位移阈值，
+   否则滑动页面会把正在编辑的内容提前存掉 */
+function onTapOutside(sel, handler) {
+  let down = null;
+  document.addEventListener('pointerdown', (e) => {
+    if (e.target.closest(sel)) { down = null; return; }
+    down = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  }, true);
+  document.addEventListener('pointerup', (e) => {
+    if (!down || e.pointerId !== down.id) return;
+    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+    down = null;
+    if (moved > TAP_SLOP) return;
+    handler(e);
+  }, true);
+  document.addEventListener('pointercancel', () => { down = null; }, true);
+}
 
 /* 规划窗的界面状态。位置用视口坐标，拖过就记住；不落盘，刷新回默认位 */
 const planUi = {
@@ -478,10 +533,268 @@ function renderStrip() {
 function render() {
   renderHeader();
   renderWeek();
+  renderMTabs();
   renderPhone();
   renderPlanWin();
+  renderPhonePlan();
   // 翻周/翻天重建列表后，之前高亮的格子节点已不存在
   if (drag && drag.active) clearHotZone();
+}
+
+/* ---------------- 手机端「规划」页 ----------------
+   桌上那套浮窗在手机上装不下（屏幕只有 390px，指头也点不准把手），
+   所以手机走另一条渲染路径：整页展示，与「当天」用标签切换。
+   行为与桌面浮窗完全一致 —— 同一份 plan 数据、同一条写队列、同样的点按阈值。 */
+
+// 手机端正在编辑的条目 id。与桌面浮窗的 planUi.editId 分开，两边可以各自开着
+let mEditId = null;
+// 手机端的提交函数：切页、翻周、切条目之前先落地
+let mCommit = null;
+function flushMobileEdit() {
+  const f = mCommit;
+  mCommit = null;
+  if (f) f();
+}
+
+function renderPhonePlan() {
+  if (!isNarrow()) return;   // 桌面不渲染这块（手机端整页是窄屏专属）
+
+  const done = plan.filter((p) => p.doneAt).length;
+  const txt = plan.length ? `${done}/${plan.length}` : '空';
+
+  $('mPlanTitle').textContent = planTitle();
+  $('mPlanNum').textContent = txt;
+  $('mPlanCount').textContent = plan.length ? txt : '';
+
+  const list = $('mPlanList');
+  list.textContent = '';
+
+  if (!plan.length) {
+    const e = document.createElement('p');
+    e.className = 'pw-card-empty';
+    e.textContent = '这一周还没写。加一条开始。';
+    list.appendChild(e);
+    return;
+  }
+  plan.forEach((p) => list.appendChild(phonePlanRow(p)));
+}
+
+/* 只刷手机端标题行上的计数，不重画列表：勾选后走这里，
+   免得为了一个数字把节点全换掉、正在进行的点击落空 */
+function syncMobilePlanCount() {
+  if (isNarrow() === false) return;
+  const done = plan.filter((p) => p.doneAt).length;
+  const txt = plan.length ? `${done}/${plan.length}` : '空';
+  const num = document.getElementById('mPlanNum');
+  const badge = document.getElementById('mPlanCount');
+  if (num) num.textContent = txt;
+  if (badge) badge.textContent = plan.length ? txt : '';
+}
+
+function phonePlanRow(p) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mrow' + (p.doneAt ? ' done' : '');
+  wrap.dataset.id = p.id;
+
+  /* 勾：只改完成，不打开编辑 */
+  const chk = document.createElement('button');
+  chk.type = 'button';
+  chk.className = 'mchk';
+  chk.setAttribute('aria-pressed', String(!!p.doneAt));
+  chk.setAttribute('aria-label', p.doneAt ? '取消完成' : '标记完成');
+  const ring = document.createElement('i');
+  ring.appendChild(planIcon('check'));
+  chk.appendChild(ring);
+  chk.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setPlanDone(p, !p.doneAt);
+  });
+  wrap.appendChild(chk);
+
+  /* 内容槽：只读与编辑轮流住在里面，行节点本身不换 */
+  const content = document.createElement('div');
+  content.className = 'mrc';
+  wrap.appendChild(content);
+
+  /* 删除 */
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'mdel';
+  del.setAttribute('aria-label', '删除这一条');
+  del.appendChild(planIcon('trash', 'sm'));
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();
+    delPlanRow(p);
+  });
+  wrap.appendChild(del);
+
+  /* 点行进编辑：过位移阈值，滑动不算点击 */
+  onTap(wrap, () => {
+    if (mEditId === p.id) return;
+    flushMobileEdit();
+    mEditId = p.id;
+    fillPhonePlanRow(wrap, content, p);
+  }, '.mchk,.mdel,input');
+
+  fillPhonePlanRow(wrap, content, p);
+  return wrap;
+}
+
+function fillPhonePlanRow(wrap, content, p) {
+  content.textContent = '';
+  if (mEditId === p.id) {
+    content.appendChild(phonePlanEditor(p, wrap, content));
+    return;
+  }
+  const t = document.createElement('p');
+  t.className = 'mrt';
+  t.textContent = p.title || '未命名';
+  content.appendChild(t);
+  // 没有备注就不渲染占位：那一行的高度让给内容
+  if (p.note) {
+    const n = document.createElement('p');
+    n.className = 'mrn';
+    n.textContent = p.note;
+    content.appendChild(n);
+  }
+}
+
+/* 手机上的就地编辑：字段与桌面同一个 plan 对象，保存走同一条队列。
+   提交时机同样是「焦点离开整块编辑区」，不是单个输入失焦。 */
+function phonePlanEditor(p, wrap, content) {
+  const box = document.createElement('div');
+  box.className = 'medit';
+
+  const t = document.createElement('input');
+  t.className = 't';
+  t.type = 'text';
+  t.value = p.title;
+  t.maxLength = 80;
+  t.placeholder = '这一条要做什么？';
+  t.setAttribute('enterkeyhint', 'done');
+
+  const n = document.createElement('input');
+  n.className = 'n';
+  n.type = 'text';
+  n.value = p.note || '';
+  n.maxLength = 200;
+  n.placeholder = '备注（可选）';
+  n.setAttribute('enterkeyhint', 'done');
+
+  box.append(t, n);
+
+  let closed = false;
+  const leave = (save) => {
+    if (closed) return;
+    closed = true;
+    if (mCommit === leave) mCommit = null;
+    justEditedAt = Date.now();
+
+    const title = save ? t.value.trim().slice(0, 80) : p.title;
+    const note = save ? n.value.trim().slice(0, 200) : (p.note || '');
+
+    /* 放弃（Esc）：新增的空条目整条消失，已有条目保持原样。
+       与桌面同一套规则 —— 桌面那边也是「空就删、非空就还原」。 */
+    if (!save) {
+      mEditId = null;
+      if (!p.title && !p.note) {
+        const rs = plan;
+        const i = rs.indexOf(p);
+        if (i >= 0) rs.splice(i, 1);
+        wrap.remove();
+        syncMobilePlanCount();
+        if (!rs.length) renderPhonePlan();
+      } else {
+        fillPhonePlanRow(wrap, content, p);
+      }
+      return;
+    }
+
+    if (!title && !note) {
+      // 标题备注都空：这条等于没写，整行收掉
+      mEditId = null;
+      const rs = plan;
+      const i = rs.indexOf(p);
+      if (i >= 0) rs.splice(i, 1);
+      wrap.remove();
+      if (!p.id.startsWith('tmp-')) delPlanRow(p, true);
+      syncMobilePlanCount();
+      if (!rs.length) renderPhonePlan();
+      return;
+    }
+
+    if (!title) {
+      // 只有备注没有标题：服务端要求标题必填，别让它变成一次失败的写入
+      mEditId = null;
+      p.note = note;
+      fillPhonePlanRow(wrap, content, p);
+      const hint = wrap.querySelector('.mrt');
+      if (hint) { hint.textContent = '先写个标题'; hint.classList.add('need-title'); }
+      return;
+    }
+
+    const changed = title !== p.title || note !== (p.note || '');
+    p.title = title;
+    if (note) p.note = note; else delete p.note;
+    mEditId = null;
+    fillPhonePlanRow(wrap, content, p);
+    if (changed) savePlanRow(p, true);
+  };
+
+  mCommit = () => leave(true);
+
+  // 焦点在编辑区内部移动（标题 ↔ 备注）不算离开
+  box.addEventListener('focusout', (e) => {
+    if (box.contains(e.relatedTarget)) return;
+    leave(true);
+  });
+
+  for (const el of [t, n]) {
+    el.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      // 手机键盘的「完成」发 Enter：存下并退出
+      if (e.key === 'Enter') { e.preventDefault(); leave(true); }
+      if (e.key === 'Escape') { e.preventDefault(); leave(false); }
+    });
+    el.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  // 光标落在末尾，不选中全文
+  setTimeout(() => {
+    t.focus();
+    const len = t.value.length;
+    try { t.setSelectionRange(len, len); } catch (_) {}
+  }, 30);
+
+  return box;
+}
+
+function addMobilePlanRow() {
+  flushMobileEdit();
+  const p = { id: 'tmp-' + Date.now().toString(36), week: isoWeek(weekStart), title: '', order: plan.length };
+  plan.push(p);
+  mEditId = p.id;
+  phonePage = 'plan';
+  renderPhonePlan();
+  renderMTabs();
+  setTimeout(() => {
+    const el = document.querySelector(`.mrow[data-id="${p.id}"]`);
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, 60);
+}
+
+/* 标签状态。只在窄屏生效 —— 桌面上这两块是 display:none，
+   不该被 write 成 hidden，否则静止态 DOM 平白多出一堆属性 */
+function renderMTabs() {
+  if (!isNarrow()) return;
+  document.querySelectorAll('.mtab').forEach((b) => {
+    const on = b.dataset.page === phonePage;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  const planOn = phonePage === 'plan';
+  $('mPlan').hidden = !planOn;
+  $('phone').hidden = planOn;
 }
 
 /* ---------------- 周规划 ----------------
@@ -672,14 +985,14 @@ function planRowEl(p) {
   });
   wrap.appendChild(del);
 
-  /* 点行进编辑：pointerdown 里就落地，别等 click 被 blur 吃掉 */
-  wrap.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('.pw-chk,.pw-del')) return;
+  /* 点行进入编辑：用 onTap 过位移阈值，
+     否则在触屏上一擦过就开编辑（桌面拖拽不受影响：位移超过阈值即判滑动） */
+  onTap(wrap, () => {
     if (planUi.editId === p.id) return;
     flushPlanEdit();
     planUi.editId = p.id;
     fillPlanRow(wrap, content, p);
-  });
+  }, '.pw-chk,.pw-del,input');
 
   fillPlanRow(wrap, content, p);
   return wrap;
@@ -734,6 +1047,7 @@ function planEditorEl(p, wrap, content) {
     if (closed) return;
     closed = true;
     if (planCommit === commit) planCommit = null;
+    justEditedAt = Date.now();
 
     const title = t.value.trim().slice(0, 80);
     const note = n.value.trim().slice(0, 200);
@@ -826,12 +1140,20 @@ function syncPlanBar() {
 }
 
 function flashPlanSaved() {
-  if (!planEl) return;
-  const s = planEl.querySelector('.pw-bar .saved');
-  if (!s) return;
-  s.classList.add('on');
+  // 桌面浮窗与手机端各有一个「已保存」，开着哪个就闪哪个
+  const targets = [];
+  if (planEl) {
+    const s = planEl.querySelector('.pw-bar .saved');
+    if (s) targets.push(s);
+  }
+  const ms = document.getElementById('mPlanSaved');
+  if (ms) targets.push(ms);
+  if (!targets.length) return;
+  targets.forEach((s) => s.classList.add('on'));
   clearTimeout(flashPlanSaved.timer);
-  flashPlanSaved.timer = setTimeout(() => s.classList.remove('on'), 1100);
+  flashPlanSaved.timer = setTimeout(() => {
+    targets.forEach((s) => s.classList.remove('on'));
+  }, 1100);
 }
 
 /* ---- 规划的写操作：都走同一条写队列，与服务端串行对齐 ---- */
@@ -840,20 +1162,24 @@ function setPlanDone(p, done) {
   if (done) p.doneAt = new Date().toISOString();
   else delete p.doneAt;
 
-  // 只改这一行的外观：整窗重画会把节点换掉，正在进行的点击会落在死节点上
-  if (planEl) {
-    const row = planEl.querySelector(`.pw-row[data-id="${p.id}"]`);
-    if (row) {
-      row.classList.toggle('done', !!p.doneAt);
-      const chk = row.querySelector('.pw-chk');
-      if (chk) {
-        chk.setAttribute('aria-pressed', String(!!p.doneAt));
-        chk.setAttribute('aria-label', p.doneAt ? '取消完成' : '标记完成');
-        chk.title = p.doneAt ? '取消完成' : '标记完成';
-      }
+  // 只改这一行的外观：整窗重画会把节点换掉，正在进行的点击会落在死节点上。
+  // 桌面浮窗与手机端各有一份行节点，两处都要刷
+  const paint = (scope, rowSel, chkSel) => {
+    if (!scope) return;
+    const row = scope.querySelector(`${rowSel}[data-id="${p.id}"]`);
+    if (!row) return;
+    row.classList.toggle('done', !!p.doneAt);
+    const chk = row.querySelector(chkSel);
+    if (chk) {
+      chk.setAttribute('aria-pressed', String(!!p.doneAt));
+      chk.setAttribute('aria-label', p.doneAt ? '取消完成' : '标记完成');
+      chk.title = p.doneAt ? '取消完成' : '标记完成';
     }
-  }
+  };
+  paint(planEl, '.pw-row', '.pw-chk');
+  paint(document.getElementById('mPlanList'), '.mrow', '.mchk');
   syncPlanBar();
+  syncMobilePlanCount();
 
   enqueueWrite(async () => {
     if (p.id.startsWith('tmp-')) return;   // 还没落盘的新条目，等它建完自己带上状态
@@ -884,7 +1210,11 @@ function savePlanRow(p, flash) {
       });
       const i = plan.indexOf(p);
       if (i >= 0) plan[i] = r.plan;
-      renderPlanWin();
+      // 必须重画两端：手机端的行节点与闭包里还攥着旧的那个 tmp- 对象，
+      // 不重建的话，再改一次还会以 tmp- 走 POST，同一内容变成两条
+      if (planUi.editId === p.id) planUi.editId = null;
+      if (mEditId === p.id) mEditId = null;
+      refreshPlanViews();
       return;
     }
     await api(`/api/plan/${p.id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -903,12 +1233,21 @@ function addPlanRow() {
   renderPlanWin();
 }
 
+/* 规划数据的任何写操作之后都要重画两端。
+   桌面是浮窗（可能没开），手机是整页（只在窄屏渲染）。
+   曾经只重画浮窗，结果手机上删掉的条目还留在屏幕上、新建的条目重复 POST。 */
+function refreshPlanViews() {
+  renderPlanWin();
+  renderPhonePlan();
+}
+
 function delPlanRow(p, quiet) {
   const i = plan.indexOf(p);
   if (i >= 0) plan.splice(i, 1);
   if (planUi.editId === p.id) planUi.editId = null;
-  if (!quiet) renderPlanWin();
-  if (p.id.startsWith('tmp-')) { syncPlanBar(); return; }
+  if (mEditId === p.id) mEditId = null;
+  if (!quiet) refreshPlanViews();
+  if (p.id.startsWith('tmp-')) { syncPlanBar(); syncMobilePlanCount(); return; }
 
   enqueueWrite(async () => {
     await api(`/api/plan/${p.id}`, { method: 'DELETE' });
@@ -1013,16 +1352,16 @@ function togglePlanWin() {
 
 $('planBtn').addEventListener('click', togglePlanWin);
 
-// 未置顶时点外面收起；置顶后点别处既不沉也不关
-document.addEventListener('pointerdown', (e) => {
+// 未置顶时点外面收起；置顶后点别处既不沉也不关。
+// 用 onTapOutside：滑动页面不算「点外面」，否则触屏上一滚就把浮窗关掉了。
+// justEditedAt 见状态区：这一下如果刚结束一次编辑，就只算退出编辑，不动窗口。
+onTapOutside('.pw, .bar', () => {
   if (!planUi.open || planUi.pinned) return;
-  // 顶栏（翻周、回本周、规划按钮）不算「外面」：翻周时窗口该跟着换内容，而不是被关掉
-  if (e.target.closest('.pw, .bar')) return;
-  if (planUi.editId) return;
+  if (Date.now() - justEditedAt < 500) return;
   planUi.open = false;
   renderPlanWin();
   renderHeader();
-}, true);
+});
 
 window.addEventListener('resize', () => {
   if (!planUi.open || planUi.x === null) return;
@@ -1468,7 +1807,9 @@ function setBusy(on) {
 
 // 翻周时停在同一个星期几上，手机端不会跳回周一
 function shiftWeek(n, quiet) {
-  flushPlanEdit();   // 翻走之前把正在改的那条落地，否则新一周的数据回来会盖掉它
+  flushPlanEdit();
+  flushMobileEdit();
+  mEditId = null;   // 翻走之前把正在改的那条落地，否则新一周的数据回来会盖掉它
   const idx = Math.round((parseYmd(phoneDate) - weekStart) / 86400000);
   weekStart = addDays(weekStart, n * 7);
   phoneDate = ymd(addDays(weekStart, Math.min(6, Math.max(0, idx))));
@@ -1483,6 +1824,8 @@ function shiftWeek(n, quiet) {
 
 function shiftDay(n) {
   flushPlanEdit();
+  flushMobileEdit();
+  mEditId = null;
   const next = addDays(parseYmd(phoneDate), n);
   phoneDate = ymd(next);
   const ws = startOfWeek(next);
@@ -1494,6 +1837,8 @@ function shiftDay(n) {
 
 function goToday() {
   flushPlanEdit();
+  flushMobileEdit();
+  mEditId = null;
   weekStart = startOfWeek(new Date());
   phoneDate = TODAY;
   renderHeader();
@@ -1509,6 +1854,23 @@ $('todayBtn').addEventListener('click', goToday);
 
 $('pPrevW').addEventListener('click', () => shiftWeek(-1));
 $('pNextW').addEventListener('click', () => shiftWeek(1));
+
+/* 手机端「规划 / 当天」标签与添加按钮 */
+document.querySelectorAll('.mtab').forEach((b) => {
+  b.addEventListener('click', () => {
+    flushMobileEdit();
+    phonePage = b.dataset.page;
+    renderMTabs();
+    renderPhonePlan();
+  });
+});
+$('mPlanAdd').addEventListener('click', addMobilePlanRow);
+
+/* 手机上点空白处退编辑并保存。用 onTapOutside 过位移阈值：
+   滑动页面不该把正在编辑的内容提前存掉，也不该让编辑框消失。 */
+onTapOutside('.medit,.mchk,.mdel,.pw-card-add,.mtabs', () => {
+  if (mEditId) flushMobileEdit();
+});
 
 document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea')) return;

@@ -1,8 +1,37 @@
-@@ -50,6 +50,7 @@
- <span class="wk-range" id="wkRange">11.09 – 11.15</span>
- </button>
- <button class="ic" id="next" aria-label="下一周">›</button>
-+<button class="tag" id="planBtn" aria-pressed="false">规划</button>
- <button class="tag on" id="todayBtn">本周</button>
- </nav>
- <label class="hs hs--sm" title="白天 / 夜间">
+@@ -198,7 +198,35 @@
+ </div>
+ </div>
+ </section>
+-<section class="phone" id="phone" aria-label="按天查看">
++<!-- 手机端：规划与当天各一页，标签切换。桌面上这两个节点被 CSS 隐藏 -->
++<div class="mtabs" id="mTabs" role="tablist">
++<button class="mtab on" role="tab" aria-selected="true" data-page="plan" id="mtabPlan">规划<span class="mtab-n" id="mPlanCount">
++</span>
++</button>
++<button class="mtab" role="tab" aria-selected="false" data-page="week" id="mtabWeek">当天</button>
++</div>
++<section class="mplan" id="mPlan" aria-label="周规划">
++<div class="pw-card">
++<div class="pw-card-head">
++<span class="pw-card-t" id="mPlanTitle">本周规划</span>
++<span class="pw-card-n" id="mPlanNum">空</span>
++<span class="sp">
++</span>
++<span class="pw-card-saved" id="mPlanSaved">已保存</span>
++</div>
++<div class="pw-card-list" id="mPlanList">
++<p class="pw-card-empty">这一周还没写。加一条开始。</p>
++</div>
++<button type="button" class="pw-card-add" id="mPlanAdd">
++<svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true">
++<path d="M8 3.2v9.6M3.2 8h9.6">
++</path>
++</svg>
++添加一条
++</button>
++</div>
++</section>
++<section class="phone" id="phone" aria-label="按天查看" hidden="">
+ <div class="phone-week">
+ <button class="ic" id="pPrevW" aria-label="上一周">‹</button>
+ <div class="strip" id="pStrip" role="group" aria-label="选择日期">

@@ -121,6 +121,28 @@
 <main class="stage">
   <section class="sheet" id="week" aria-label="本周安排"></section>
 
+  <!-- 手机端：规划与当天各一页，标签切换。桌面上这两个节点被 CSS 隐藏 -->
+  <div class="mtabs" id="mTabs" role="tablist">
+    <button class="mtab on" role="tab" aria-selected="true" data-page="plan" id="mtabPlan">规划<span class="mtab-n" id="mPlanCount"></span></button>
+    <button class="mtab" role="tab" aria-selected="false" data-page="week" id="mtabWeek">当天</button>
+  </div>
+
+  <section class="mplan" id="mPlan" aria-label="周规划">
+    <div class="pw-card">
+      <div class="pw-card-head">
+        <span class="pw-card-t" id="mPlanTitle">本周规划</span>
+        <span class="pw-card-n" id="mPlanNum">空</span>
+        <span class="sp"></span>
+        <span class="pw-card-saved" id="mPlanSaved">已保存</span>
+      </div>
+      <div class="pw-card-list" id="mPlanList"></div>
+      <button type="button" class="pw-card-add" id="mPlanAdd">
+        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.2v9.6M3.2 8h9.6"/></svg>
+        添加一条
+      </button>
+    </div>
+  </section>
+
   <section class="phone" id="phone" aria-label="按天查看">
     <div class="phone-week">
       <button class="ic" id="pPrevW" aria-label="上一周">‹</button>
