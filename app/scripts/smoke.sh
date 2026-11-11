@@ -25,6 +25,9 @@ skip() { printf '  – %s\n' "$*"; }
 
 # 有意变更的基线：diff 正文（去掉带时间戳与路径的文件头）与 scripts/*-accepted.diff
 # 逐字相同就放行；SMOKE_ACCEPT=1 时把当前正文写成新基线 —— 那次提交里就能看见「基线变了什么」。
+#
+# 接受时把「相对旧基线的增删」打出来：一次覆盖若是先删五条再加一条，
+# 光看新基线的 diff 分不清那是清理还是掩盖，提交者得当场看见删了几行。
 accept_diff() { # $1=diff 文件  $2=基线文件  $3=名字
   local body
   body="$(tail -n +3 "$1")"
@@ -33,6 +36,20 @@ accept_diff() { # $1=diff 文件  $2=基线文件  $3=名字
     return 0
   fi
   if [ "${SMOKE_ACCEPT:-0}" = "1" ]; then
+    if [ -f "$2" ]; then
+      local old="$SCRATCH/old-baseline.txt"
+      cat "$2" > "$old"
+      local plus minus
+      plus="$(diff "$old" <(printf '%s\n' "$body") | grep -c '^>' || true)"
+      minus="$(diff "$old" <(printf '%s\n' "$body") | grep -c '^<' || true)"
+      printf '  %s 基线变更：+%s 行 / -%s 行（相对旧基线）\n' "$3" "$plus" "$minus"
+      if [ "$minus" -gt 0 ]; then
+        printf '      被删掉的行（确认是有意清理，不是掩盖）：\n'
+        diff "$old" <(printf '%s\n' "$body") | grep '^<' | head -6 | sed 's/^</        /'
+      fi
+    else
+      printf '  %s 首次建立基线（%s 行）\n' "$3" "$(printf '%s\n' "$body" | grep -c . || true)"
+    fi
     printf '%s\n' "$body" > "$2"
     ok "$3 的新基线已写入 ${2#"$ROOT"/}（记得随代码一起提交）"
     return 0

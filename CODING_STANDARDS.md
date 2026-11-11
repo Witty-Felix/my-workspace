@@ -1,6 +1,6 @@
 # CODING_STANDARDS.md
 
-实现与评审共用的判断题。机械项不在这里：语法/行尾/镜像 COPY 归 `npm run check`，接口契约与渲染归 `npm run smoke`，交互归 `npm run smoke:drag` / `smoke:done`。
+实现与评审共用的判断题。机械项不在这里：语法/行尾/镜像 COPY 归 `npm run check`，接口契约与渲染归 `npm run smoke`，交互归 `npm run smoke:drag` / `smoke:done` / `smoke:plan`，布局尺寸归 `scripts/lib/layout-check.mjs`。
 
 ## 写操作
 
@@ -15,7 +15,16 @@
 - 悬停只写在 `@media (hover:hover)` 里，静止态才是地基。`npm run check` 第 6 项会拦。
 - 交互自检鼠标与触屏各跑一遍：只发鼠标事件的用例看不见隐式指针捕获（用 `scripts/lib/cdp.mjs` 的 `touchFor`）。哪个测试需要触屏档是判断题，看它测的是不是手指能碰到的东西。
 - 触屏的 touch 序列绑定在 `pointerdown` 时的目标节点上：交互期间把该节点从 DOM 摘除（重建、重排、翻页刷新都算），浏览器必发 `pointercancel`，拖拽当场断掉。需要摘时挂到 `body` 直属的固定容器（参考 `app.js` 的 `.drag-anchor`），自检必须覆盖「翻页后拖拽仍存活」。
+- **按下与松手之间不许重建节点**：一次点击要跨 `pointerdown` 与 `pointerup` 两个事件，中间重画（哪怕只是 `render()` 整棵树）会让松手落在一个已经被替换的节点上，点击静默消失。改状态只改那一处外观，别整窗重画。
 - 状态只改外观，不改排序与位置，除非 ADR 明确改了布局规则。
+
+## 浮层
+
+- **`<dialog>` 的 `showModal()` 进原生 top layer，任何 `z-index` 都压不过它**。要求「置顶」的浮层遇到模态弹框只能让位：弹框打开时收起浮层，关闭后按原状态恢复。
+- 同一编辑区里有多个输入时，提交时机是**焦点离开整块编辑区**（`focusout` 判 `relatedTarget` 是否仍在框内），不是单个输入 `blur`。否则从第一个输入点向第二个时，第一个先 blur 就重绘，第二个当场被销毁，点不进去。
+- 点外面关闭浮层时，**先把顶栏排除掉**（`.bar` 一类）。翻周、切视图这些动作发生在「外面」，但用户预期是浮层跟着换内容，不是被关掉。
+- 浮层的位置只记在内存，刷新回默认位；布局相关的常量（宽、高、默认位）与浮层状态存在同一处，别散在渲染函数里。
+- 图标必须显式给宽高：只有 `viewBox` 的 `<svg>` 按 300×150 渲染，一个 14px 的加号能撑成 281px，把同层容器挤到 0 高。`scripts/lib/layout-check.mjs` 会量。
 
 ## 数据
 

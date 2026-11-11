@@ -20,6 +20,8 @@ single-context 布局：根目录 `GLOSSARY.md` + `docs/adr/`。See `docs/agents
 
 `design/prototypes/` 放一次性原型（多方案对比 + 量尺），不进版本库（`.gitignore` 已忽略）。ADR 里提到「原型里有这行」时，同一目录名要能对上；原型验证完就随会话丢弃，结论只留在 ADR。
 
+预览会把 HTML 提取到独立目录打开，**外部相对路径全部失效**。原型要自带样式：把 `app/public/style.css` 原样拷进 `<style>`（保留一行注释标明来源），别用 `<link href="../../...">`。
+
 改**拖拽、落位、触屏交互**前，先读 `docs/adr/0006-drag-place.md`（该行为的三次修订都在里面，含触屏 pointercancel 的根因与约束）。
 
 ### 多轮需求落地
@@ -30,11 +32,13 @@ single-context 布局：根目录 `GLOSSARY.md` + `docs/adr/`。See `docs/agents
 
 改动前后跑 `cd app && npm run check && npm run smoke`；发布走 `cd app && npm run deploy`（不要手写 tar/ssh）。见 `docs/deploy.md`。
 
-`npm run smoke` 的第 2 项是**逐字 DOM 比对**（对 HEAD 基线，归一化后不得有差异）：**静止态 DOM 就是基线**。有意改 DOM 或接口响应时，跑一次 `SMOKE_ACCEPT=1 npm run smoke`，把 `app/scripts/*-accepted.diff` 和代码一起提交——基线变更就是那次提交里可评审的 diff，CI 的 `HEAD~1` 比对会认它。拖拽这类只在交互中出现的东西，仍然靠「运行时才生成节点」绕开。
+**三个浏览器自检，改了对应行为就必须跑，都本地、都不进 CI**：`smoke:drag`（拖拽落位）、`smoke:done`（完成态）、`smoke:plan`（周规划，含触屏档与布局体检）。
 
-`npm run smoke:drag` 是拖拽的端到端自检，`npm run smoke:done` 是完成态的（勾选/刷新/取消/键盘/已完成卡仍可拖）。两个都跑真浏览器、本地跑、不在 CI——改对应行为后必须跑。
+要起服务验证接口时，启停写进**同一条命令**：后台进程不跨命令存活，分开跑会拿到 `upstream connect failed`。参照 `scripts/smoke.sh` 的 `(cd app && exec env PORT=… node server.js) & … kill $!` 写法。
 
-钩子在 `.githooks/pre-commit`（跑 check + ADR 漂移 + 文档事实三项）。新克隆要启用一次：`git config core.hooksPath .githooks`。smoke 在 CI 与提交前手动跑；两个交互自检只手动。
+`npm run smoke` 的第 2 项是**逐字 DOM 比对**（对 HEAD 基线）：**静止态 DOM 就是基线**。有意改 DOM 或接口响应时跑 `SMOKE_ACCEPT=1 npm run smoke`，它会打印相对旧基线的增删行数，把 `app/scripts/*-accepted.diff` 和代码一起提交。拖拽态这类只在交互中出现的东西靠「运行时才生成节点」绕开。
+
+钩子在 `.githooks/pre-commit`（check + ADR 漂移 + 文档事实）。新克隆启用一次：`git config core.hooksPath .githooks`。
 
 ### Coding standards
 
