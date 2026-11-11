@@ -35,6 +35,21 @@ function cleanText(s, max) {
   return t.slice(0, max);
 }
 
+// 周规划的文字要留换行与缩进，不能走 cleanText 那套压平逻辑
+function cleanNote(s, max) {
+  if (typeof s !== 'string') return '';
+  return s.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').trim().slice(0, max);
+}
+
+// 「周」用 ISO 周标识，形如 2026-W46（见 GLOSSARY.md）
+const WEEK_RE = /^\d{4}-W\d{2}$/;
+
+function isWeek(s) {
+  if (typeof s !== 'string' || !WEEK_RE.test(s)) return false;
+  const w = Number(s.slice(6));
+  return w >= 1 && w <= 53;
+}
+
 // ---------- 应用 ----------
 
 const app = express();
@@ -66,18 +81,34 @@ app.use((req, res, next) => {
 });
 
 app.get('/api/items', (req, res) => {
-  const { from, to } = req.query;
+  const { from, to, week } = req.query;
   if (!isDate(from) || !isDate(to)) return res.status(400).json({ error: 'from/to 需为 YYYY-MM-DD' });
   if (from > to) return res.status(400).json({ error: 'from 不能晚于 to' });
-  const items = store.load().items.filter((it) => it.date >= from && it.date <= to).sort(compareArrangements);
+  if (week !== undefined && !isWeek(week)) return res.status(400).json({ error: 'week 需为 YYYY-Www' });
+
+  const db = store.load();
+  const items = db.items.filter((it) => it.date >= from && it.date <= to).sort(compareArrangements);
+
+  // 周规划跟着这一趟顺路回来：多一个可选字段，比再发一次请求少一个往返。
+  // 没传 week 或那一周没规划，响应里就没有 plan 这个键（稀疏，不铺空数组）
+  const body = week === undefined ? { items } : withPlan(db, week, items);
+
   // 带 ETag：翻回上一周（数据没变）时直接 304，响应体为空。
   // 移动端每次翻周都要过一次跨境往返，省掉响应体能少几百字节的传输
-  const body = JSON.stringify({ items });
-  const etag = 'W/"' + crypto.createHash('sha1').update(body).digest('base64url') + '"';
+  const text = JSON.stringify(body);
+  const etag = 'W/"' + crypto.createHash('sha1').update(text).digest('base64url') + '"';
   res.set('ETag', etag);
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
-  res.type('application/json').send(body);
+  res.type('application/json').send(text);
 });
+
+// 把某一周的规划挂进 items 响应。plans 在磁盘上是一条条记录，这里按 week 筛
+function withPlan(db, week, items) {
+  const plan = db.plans.filter((p) => p.week === week).sort(byOrder);
+  const out = { items };
+  if (plan.length) out.plan = plan;
+  return out;
+}
 
 app.post('/api/items', (req, res) => {
   const b = req.body || {};
@@ -99,7 +130,7 @@ app.post('/api/items', (req, res) => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  const next = store.envelope(db.items.concat(item));
+  const next = store.envelope(db.items.concat(item), db.plans);
   normalizeOrder(next.items);
   store.save(next);
   res.status(201).json({ item });
@@ -125,7 +156,7 @@ app.patch('/api/items/:id', (req, res) => {
   if (b.done === false) delete item.doneAt;
   item.updatedAt = new Date().toISOString();
 
-  const next = store.envelope(db.items);
+  const next = store.envelope(db.items, db.plans);
   normalizeOrder(next.items);
   store.save(next);
   res.json({ item });
@@ -137,7 +168,7 @@ app.delete('/api/items/:id', (req, res) => {
   if (idx < 0) return res.status(404).json({ error: '不存在' });
   const items = db.items.slice();
   items.splice(idx, 1);
-  const next = store.envelope(items);
+  const next = store.envelope(items, db.plans);
   normalizeOrder(next.items);
   store.save(next);
   res.json({ ok: true });
@@ -163,7 +194,7 @@ app.post('/api/items/:id/move', (req, res) => {
   item.order = other.order;
   other.order = tmp;
 
-  const next = store.envelope(db.items);
+  const next = store.envelope(db.items, db.plans);
   normalizeOrder(next.items);
   store.save(next);
   res.json({ item, moved: true });
@@ -180,7 +211,7 @@ app.post('/api/items/:id/place', (req, res) => {
   const db = store.load();
   if (!db.items.some((it) => it.id === req.params.id)) return res.status(404).json({ error: '不存在' });
 
-  const next = store.envelope(db.items);
+  const next = store.envelope(db.items, db.plans);
   placeItem(next.items, req.params.id, b.date, b.slot, b.index);
   const item = next.items.find((it) => it.id === req.params.id);
   item.updatedAt = new Date().toISOString();
@@ -188,9 +219,87 @@ app.post('/api/items/:id/place', (req, res) => {
   res.json({ item });
 });
 
+/* ---------- 周规划 ----------
+   一条规划也是一条记录：{ id, week, title, note?, doneAt?, order, createdAt, updatedAt }。
+   与「安排」同形但不同表 —— 规划不落位、不挂时段，只归属到某一周。
+   界面读规划走 GET /api/items 顺路带回（少一个往返）；这个 GET 留着给自检与排查用。 */
+
+// 取某一周的规划
+app.get('/api/plan', (req, res) => {
+  const { week } = req.query;
+  if (!isWeek(week)) return res.status(400).json({ error: 'week 需为 YYYY-Www' });
+  res.json({ plan: store.load().plans.filter((p) => p.week === week).sort(byOrder) });
+});
+
+// 加一条规划条目
+app.post('/api/plan', (req, res) => {
+  const b = req.body || {};
+  if (!isWeek(b.week)) return res.status(400).json({ error: 'week 需为 YYYY-Www' });
+  const title = cleanText(b.title, 80);
+  if (!title) return res.status(400).json({ error: '标题不能为空' });
+
+  const db = store.load();
+  const siblings = db.plans.filter((p) => p.week === b.week);
+  const now = new Date().toISOString();
+  const plan = {
+    id: crypto.randomUUID(),
+    week: b.week,
+    title,
+    order: siblings.length,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const note = cleanNote(b.note, 200);
+  if (note) plan.note = note;   // 没有备注就不写这个字段
+  // 建的时候就能带完成状态：前端新增后立刻勾选，不该等下一次 PATCH
+  if (b.done === true) plan.doneAt = now;
+
+  const next = store.envelope(db.items, db.plans.concat(plan));
+  store.save(next);
+  res.status(201).json({ plan });
+});
+
+// 改一条规划：标题 / 备注 / 完成。字段不存在就不动它
+app.patch('/api/plan/:id', (req, res) => {
+  const db = store.load();
+  const plan = db.plans.find((p) => p.id === req.params.id);
+  // 对象不存在就不谈字段：404 先于校验
+  if (!plan) return res.status(404).json({ error: '不存在' });
+
+  const b = req.body || {};
+  if (b.title !== undefined && !cleanText(b.title, 80)) return res.status(400).json({ error: '标题不能为空' });
+  if (b.done !== undefined && typeof b.done !== 'boolean') return res.status(400).json({ error: 'done 需为布尔值' });
+
+  if (b.title !== undefined) plan.title = cleanText(b.title, 80);
+  if (b.note !== undefined) {
+    const note = cleanNote(b.note, 200);
+    // 备注清空就把字段删掉，别留一个空串占着
+    if (note) plan.note = note;
+    else delete plan.note;
+  }
+  // 完成只是一个时间戳：有就是已完成，没有就是未完成（同 ADR-0007）
+  if (b.done === true && !plan.doneAt) plan.doneAt = new Date().toISOString();
+  if (b.done === false) delete plan.doneAt;
+  plan.updatedAt = new Date().toISOString();
+
+  store.save(store.envelope(db.items, db.plans));
+  res.json({ plan });
+});
+
+app.delete('/api/plan/:id', (req, res) => {
+  const db = store.load();
+  const idx = db.plans.findIndex((p) => p.id === req.params.id);
+  if (idx < 0) return res.status(404).json({ error: '不存在' });
+  const plans = db.plans.slice();
+  plans.splice(idx, 1);
+  store.save(store.envelope(db.items, plans));
+  res.json({ ok: true });
+});
+
 app.get('/api/export', (req, res) => {
   res.set('Content-Disposition', 'attachment; filename="workbench-data.json"');
-  res.json(store.load());
+  // 导出的就是磁盘格式本身（空 plans 不写），能原样放回 DATA_DIR
+  res.json(store.forDisk(store.load()));
 });
 
 // 领域模块：浏览器要的那一份（与服务端 require 的是同一个文件）

@@ -1,40 +1,8 @@
-@@ -157,7 +157,6 @@
- <span class="dnum">11.11</span>
- </div>
- <div class="stack">
--<p class="empty">空着</p>
- <button type="button" class="add" title="在 11.11 添加安排">＋</button>
- </div>
- </div>
-@@ -167,7 +166,6 @@
- <span class="dnum">11.12</span>
- </div>
- <div class="stack">
--<p class="empty">空着</p>
- <button type="button" class="add" title="在 11.12 添加安排">＋</button>
- </div>
- </div>
-@@ -177,7 +175,6 @@
- <span class="dnum">11.13</span>
- </div>
- <div class="stack">
--<p class="empty">空着</p>
- <button type="button" class="add" title="在 11.13 添加安排">＋</button>
- </div>
- </div>
-@@ -187,7 +184,6 @@
- <span class="dnum">11.14</span>
- </div>
- <div class="stack">
--<p class="empty">空着</p>
- <button type="button" class="add" title="在 11.14 添加安排">＋</button>
- </div>
- </div>
-@@ -197,7 +193,6 @@
- <span class="dnum">11.15</span>
- </div>
- <div class="stack">
--<p class="empty">空着</p>
- <button type="button" class="add" title="在 11.15 添加安排">＋</button>
- </div>
- </div>
+@@ -50,6 +50,7 @@
+ <span class="wk-range" id="wkRange">11.09 – 11.15</span>
+ </button>
+ <button class="ic" id="next" aria-label="下一周">›</button>
++<button class="tag" id="planBtn" aria-pressed="false">规划</button>
+ <button class="tag on" id="todayBtn">本周</button>
+ </nav>
+ <label class="hs hs--sm" title="白天 / 夜间">

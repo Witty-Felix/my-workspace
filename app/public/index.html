@@ -20,11 +20,21 @@
   var end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
   var from = ymd(start);
   var to = ymd(end);
+  // ISO 周标识，和 app.js 的 isoWeek 同一算法：周规划要按周取，不能靠日期区间推
+  var isoWeek = function (d) {
+    var t = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    t.setDate(t.getDate() + 3 - ((t.getDay() + 6) % 7));
+    var week1 = new Date(t.getFullYear(), 0, 4);
+    var w = 1 + Math.round(((t - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+    return t.getFullYear() + '-W' + p(w);
+  };
+  var week = isoWeek(start);
   try {
     window.__WB_BOOT__ = {
       from: from,
       to: to,
-      data: fetch('api/items?from=' + from + '&to=' + to)
+      week: week,
+      data: fetch('api/items?from=' + from + '&to=' + to + '&week=' + week)
         .then(function (r) {
           if (!r.ok) throw new Error('请求失败（' + r.status + '）');
           return r.json();
@@ -76,6 +86,7 @@
       <span class="wk-range" id="wkRange">—</span>
     </button>
     <button class="ic" id="next" aria-label="下一周">›</button>
+    <button class="tag" id="planBtn" aria-pressed="false">规划</button>
     <button class="tag" id="todayBtn">本周</button>
   </nav>
 

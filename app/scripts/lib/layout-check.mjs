@@ -1,0 +1,78 @@
+/* 布局体检：DOM 结构对了、尺寸却坏掉的那一类错误。
+   2026-11-11 两次栽在同一件事上——SVG 只写 viewBox 没写宽高，
+   浏览器按 300×150 渲染，一个 14px 的加号撑成 281px，把列表挤到 4px 高，
+   点击全部落空。逐字 DOM 比对看不见这种问题，它只比结构不比尺寸。
+
+   三条断言，都是一眼能判的：
+     1. 图标不超大：页面里每个 <svg> 的宽高都该在 32px 以内
+     2. 容器不塌陷：可滚动列表的高度不能是 0
+     3. 命中区够大：可点元素不小于 24px（触屏标准，见 CODING_STANDARDS「界面」）
+
+   用法（在 CDP 会话里）：
+     const bad = await layoutCheck(js, ['.pw-list', '.card .title']);
+     if (bad.length) { ... 逐条报 ... } */
+
+export const layoutCheck = async (js, clickables = []) => js(`(() => {
+  const out = [];
+
+  // 隐藏的东西不参与体检：display:none 的另一套容器、没打开的弹框，量出来都是 0
+  const hidden = (el) => {
+    if (!el || !el.isConnected) return true;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return true;
+    if (el.closest('dialog:not([open])')) return true;
+    const r = el.getBoundingClientRect();
+    return r.width === 0 && r.height === 0;
+  };
+
+  // 1. 图标不超大。装饰性插图（有 aria-hidden 的整块图）不算图标
+  for (const s of document.querySelectorAll('svg')) {
+    if (hidden(s)) continue;
+    if (s.closest('.hs__container')) continue;   // 昼夜开关里的星图/云是插图，不是图标
+    const r = s.getBoundingClientRect();
+    if (r.width > 32 || r.height > 32) {
+      out.push({
+        kind: 'icon-too-big',
+        what: (s.parentElement ? s.parentElement.className : '?') + ' > svg',
+        size: Math.round(r.width) + '×' + Math.round(r.height),
+      });
+    }
+  }
+
+  // 2. 容器不塌陷：有 overflow 的容器高度不该是 0
+  for (const el of document.querySelectorAll('*')) {
+    const cs = getComputedStyle(el);
+    if (cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') continue;
+    if (hidden(el)) continue;
+    const r = el.getBoundingClientRect();
+    if (r.height < 1) {
+      out.push({ kind: 'collapsed', what: el.className || el.tagName, size: Math.round(r.height) + 'px' });
+    }
+  }
+
+  // 3. 命中区够大
+  const sel = ${JSON.stringify(clickables)};
+  for (const one of sel) {
+    for (const el of document.querySelectorAll(one)) {
+      if (hidden(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 24 || r.height < 24) {
+        out.push({ kind: 'hit-too-small', what: one, size: Math.round(r.width) + '×' + Math.round(r.height) });
+      }
+    }
+  }
+
+  return out;
+})()`);
+
+/* 把体检结果按人话打出来，返回是否有问题 */
+export const reportLayout = (findings, ok, bad) => {
+  if (!findings || !findings.length) { ok('布局体检：图标尺寸、容器高度、命中区都正常'); return false; }
+  for (const f of findings.slice(0, 8)) {
+    if (f.kind === 'icon-too-big') bad(`图标超大：${f.what} 是 ${f.size}（SVG 缺宽高？）`);
+    else if (f.kind === 'collapsed') bad(`容器塌陷：${f.what} 高度 ${f.size}`);
+    else bad(`命中区偏小：${f.what} 是 ${f.size}（应 ≥24）`);
+  }
+  if (findings.length > 8) bad(`……另有 ${findings.length - 8} 处`);
+  return true;
+};

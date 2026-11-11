@@ -31,8 +31,32 @@ const TODAY = ymd(new Date());
 
 let weekStart = startOfWeek(new Date());
 let items = [];
+// 当前这一周的规划条目（见 GLOSSARY.md 的「周规划」）。与 items 分开存，不参与落位
+let plan = [];
 let phoneDate = TODAY;
 let editState = null;
+
+/* 规划窗的界面状态。位置用视口坐标，拖过就记住；不落盘，刷新回默认位 */
+const planUi = {
+  open: false,
+  pinned: false,
+  min: false,
+  x: null,
+  y: null,
+  w: 372,
+  h: 348,
+  drag: null,
+  rz: null,
+  editId: null,
+};
+let planEl = null;
+// 正在编辑的那一条的提交函数：切换目标、拖动、翻周之前先落地，否则改动会丢
+let planCommit = null;
+function flushPlanEdit() {
+  const f = planCommit;
+  planCommit = null;
+  if (f) f();
+}
 
 // 拖拽状态。投放格是拖拽期间才存在的一组流内方框（.zone），静止态没有它们
 let drag = null;
@@ -42,6 +66,8 @@ let hotZone = null;    // 当前高亮的那一格
 const itemOf = new WeakMap();
 // 拖拽起手时预取前后两周，翻周不必等跨境往返；一次即弃，写操作后清空
 const weekAhead = new Map();
+// 预取时顺带带回的周规划，与 weekAhead 同键同寿命
+const aheadPlan = new Map();
 
 /* ---------------- 网络 ---------------- */
 
@@ -79,6 +105,7 @@ function withSignal(promise, signal) {
 async function loadWeek(signal) {
   const from = ymd(weekStart);
   const to = ymd(addDays(weekStart, 6));
+  const wk = isoWeek(weekStart);
 
   // 拖拽翻页时用的是起手预取的那一份，翻过去立刻有内容
   const key = from + '|' + to;
@@ -86,6 +113,7 @@ async function loadWeek(signal) {
   if (ahead) {
     weekAhead.delete(key);
     items = ahead;
+    plan = aheadPlan.get(key) || [];
     return;
   }
 
@@ -94,11 +122,13 @@ async function loadWeek(signal) {
     bootUsed = true;
     const data = await withSignal(boot.data, signal);
     items = data.items || [];
+    plan = data.plan || [];
     return;
   }
-
-  const data = await api(`/api/items?from=${from}&to=${to}`, { signal });
+  // 周规划跟着这一趟顺路回来（week 显式传，不靠 from 是不是周一）
+  const data = await api(`/api/items?from=${from}&to=${to}&week=${wk}`, { signal });
   items = data.items || [];
+  plan = data.plan || [];
 }
 
 // 同一时刻只留一个列表请求：连点翻周时，后发的会把先发的取消掉，
@@ -274,6 +304,8 @@ function renderHeader() {
   $('wkKey').textContent = isoWeek(weekStart);
   $('wkRange').textContent = `${monthDay(weekStart)} – ${monthDay(addDays(weekStart, 6))}`;
   $('todayBtn').classList.toggle('on', isThis);
+  $('planBtn').classList.toggle('on', planUi.open);
+  $('planBtn').setAttribute('aria-pressed', String(planUi.open));
 }
 
 function renderWeek() {
@@ -447,9 +479,557 @@ function render() {
   renderHeader();
   renderWeek();
   renderPhone();
+  renderPlanWin();
   // 翻周/翻天重建列表后，之前高亮的格子节点已不存在
   if (drag && drag.active) clearHotZone();
 }
+
+/* ---------------- 周规划 ----------------
+   一个可以拖动的浮窗：一周一份条目，勾选即完成，点行就地改标题与备注。
+   与「安排」完全分开 —— 不落位、不占时段、不进周轴。
+
+   静止态 DOM 与上线前一致：窗口只在打开时渲染，默认不打开。
+   位置只记在内存里，刷新回默认位（同拖拽态三格的处理方式）。 */
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const PLAN_ICONS = {
+  pin: 'M6 2.2h4M8 2.2v4.6l2.4 2.4H5.6L8 6.8V2.2M8 9.2v4.6',
+  min: 'M3.4 8h9.2',
+  close: 'M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6',
+  check: 'M3 8.4l3.3 3.3L13 5',
+  plus: 'M8 3.2v9.6M3.2 8h9.6',
+  trash: 'M4 4.6h8M6.6 4.6V3.2h2.8v1.4M5.2 4.6l.6 8.2h4.4l.6-8.2',
+};
+
+function planIcon(name, cls) {
+  const s = document.createElementNS(SVG_NS, 'svg');
+  s.setAttribute('viewBox', '0 0 16 16');
+  s.setAttribute('class', 'ico' + (cls ? ' ' + cls : ''));
+  s.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS(SVG_NS, 'path');
+  p.setAttribute('d', PLAN_ICONS[name]);
+  s.appendChild(p);
+  return s;
+}
+
+// 窗口标题跟着翻到的那一周走，不看「今天」
+function planTitle() {
+  const thisWeek = ymd(weekStart) === ymd(startOfWeek(new Date()));
+  if (thisWeek) return '本周规划';
+  const diff = Math.round((weekStart - startOfWeek(new Date())) / 86400000);
+  if (diff === 7) return '下周规划';
+  if (diff === -7) return '上周规划';
+  return isoWeek(weekStart) + ' 规划';
+}
+
+function renderPlanWin() {
+  if (planEl) { planEl.remove(); planEl = null; }
+  if (!planUi.open) return;
+
+  const done = plan.filter((p) => p.doneAt).length;
+
+  const el = document.createElement('section');
+  el.className = 'pw' + (planUi.pinned ? ' pinned' : '') + (planUi.min ? ' min' : '');
+  el.style.width = planUi.w + 'px';
+  if (!planUi.min) el.style.height = planUi.h + 'px';
+
+  /* --- 标题栏：拖动把手 --- */
+  const bar = document.createElement('div');
+  bar.className = 'pw-bar';
+
+  const t = document.createElement('span');
+  t.className = 't';
+  t.textContent = planTitle();
+
+  const n = document.createElement('span');
+  n.className = 'n';
+  n.textContent = plan.length ? `${done}/${plan.length}` : '空';
+
+  const saved = document.createElement('span');
+  saved.className = 'saved';
+  saved.textContent = '已保存';
+
+  const sp = document.createElement('span');
+  sp.className = 'sp';
+
+  bar.append(t, n, saved, sp);
+
+  const mkBtn = (icon, tip, on, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pw-btn' + (on ? ' on' : '');
+    b.title = tip;
+    b.setAttribute('aria-label', tip);
+    if (on) b.setAttribute('aria-pressed', 'true');
+    b.appendChild(planIcon(icon));
+    b.addEventListener('click', fn);
+    return b;
+  };
+
+  bar.append(
+    mkBtn('pin', planUi.pinned ? '取消置顶（点外面会收起）' : '置顶：点别处也不被遮盖', planUi.pinned, () => {
+      planUi.pinned = !planUi.pinned;
+      renderPlanWin();
+    }),
+    mkBtn('min', planUi.min ? '展开' : '最小化，只留标题栏', false, () => {
+      flushPlanEdit();
+      planUi.min = !planUi.min;
+      renderPlanWin();
+    }),
+    mkBtn('close', '收起（内容已存）', false, () => {
+      flushPlanEdit();
+      planUi.open = false;
+      renderPlanWin();
+      renderHeader();
+    })
+  );
+
+  el.appendChild(bar);
+
+  /* --- 列表 --- */
+  const list = document.createElement('div');
+  list.className = 'pw-list';
+
+  if (!plan.length) {
+    const e = document.createElement('p');
+    e.className = 'pw-empty';
+    e.textContent = '这一周还没写。加一条开始。';
+    list.appendChild(e);
+  } else {
+    plan.forEach((p) => list.appendChild(planRowEl(p)));
+  }
+  el.appendChild(list);
+
+  /* --- 添加 --- */
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'pw-add';
+  add.appendChild(planIcon('plus', 'sm'));
+  add.appendChild(document.createTextNode('添加一条'));
+  add.addEventListener('click', addPlanRow);
+  el.appendChild(add);
+
+  /* --- 缩放把手 --- */
+  const rz = document.createElement('div');
+  rz.className = 'pw-resize';
+  rz.title = '拖这里改大小';
+  el.appendChild(rz);
+
+  planDragify(el, bar);
+  planResizify(el, rz);
+  placePlanWin(el);
+  document.body.appendChild(el);
+  planEl = el;
+}
+
+function placePlanWin(el) {
+  if (planUi.x === null) {
+    const narrow = window.innerWidth <= 900;
+    planUi.w = narrow ? Math.min(360, window.innerWidth - 20) : 372;
+    planUi.x = narrow ? 10 : Math.max(12, window.innerWidth - planUi.w - 34);
+    planUi.y = narrow ? 64 : 92;
+  }
+  el.style.left = planUi.x + 'px';
+  el.style.top = planUi.y + 'px';
+}
+
+function planRowEl(p) {
+  const wrap = document.createElement('div');
+  wrap.className = 'pw-row' + (p.doneAt ? ' done' : '');
+  wrap.dataset.id = p.id;
+
+  /* 勾：只改完成状态，不打开编辑、不碰顺序 */
+  const chk = document.createElement('button');
+  chk.type = 'button';
+  chk.className = 'pw-chk';
+  chk.setAttribute('aria-pressed', String(!!p.doneAt));
+  chk.setAttribute('aria-label', p.doneAt ? '取消完成' : '标记完成');
+  chk.title = p.doneAt ? '取消完成' : '标记完成';
+  const ring = document.createElement('i');
+  ring.appendChild(planIcon('check'));
+  chk.appendChild(ring);
+  chk.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setPlanDone(p, !p.doneAt);
+  });
+  wrap.appendChild(chk);
+
+  /* 内容槽：只读与编辑轮流住在里面，行节点本身不换 */
+  const content = document.createElement('div');
+  content.className = 'pw-content';
+  wrap.appendChild(content);
+
+  /* 删除：悬停显形，触屏常显 */
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'pw-del';
+  del.title = '删除这一条';
+  del.setAttribute('aria-label', '删除这一条');
+  del.appendChild(planIcon('trash', 'sm'));
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();
+    delPlanRow(p);
+  });
+  wrap.appendChild(del);
+
+  /* 点行进编辑：pointerdown 里就落地，别等 click 被 blur 吃掉 */
+  wrap.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.pw-chk,.pw-del')) return;
+    if (planUi.editId === p.id) return;
+    flushPlanEdit();
+    planUi.editId = p.id;
+    fillPlanRow(wrap, content, p);
+  });
+
+  fillPlanRow(wrap, content, p);
+  return wrap;
+}
+
+function fillPlanRow(wrap, content, p) {
+  content.textContent = '';
+  if (planUi.editId === p.id) {
+    content.appendChild(planEditorEl(p, wrap, content));
+    return;
+  }
+
+  const rc = document.createElement('div');
+  rc.className = 'pw-rc';
+  const t = document.createElement('p');
+  t.className = 'pw-rt';
+  t.textContent = p.title || '未命名';
+  rc.appendChild(t);
+  // 没有备注就不渲染占位：那一行的高度让给内容，不铺空白
+  if (p.note) {
+    const nt = document.createElement('p');
+    nt.className = 'pw-rn';
+    nt.textContent = p.note;
+    rc.appendChild(nt);
+  }
+  content.appendChild(rc);
+}
+
+/* 就地编辑：标题 + 备注同住一块编辑区。
+   提交时机是「焦点离开整块编辑区」而不是单个输入失焦 ——
+   否则从标题点向备注时，标题先 blur 就重绘，备注框当场被销毁，点不进去。 */
+function planEditorEl(p, wrap, content) {
+  const box = document.createElement('div');
+  box.className = 'pw-edit';
+
+  const t = document.createElement('input');
+  t.className = 't';
+  t.value = p.title;
+  t.maxLength = 80;
+  t.placeholder = '这一条要做什么？';
+
+  const n = document.createElement('input');
+  n.className = 'n';
+  n.value = p.note || '';
+  n.maxLength = 200;
+  n.placeholder = '备注（可选）';
+
+  box.append(t, n);
+
+  let closed = false;
+  const leave = (save) => {
+    if (closed) return;
+    closed = true;
+    if (planCommit === commit) planCommit = null;
+
+    const title = t.value.trim().slice(0, 80);
+    const note = n.value.trim().slice(0, 200);
+
+    if (!save) {
+      // 放弃：新增的空条目直接消失，已有条目保持原样
+      planUi.editId = null;
+      if (!p.title && !p.note) {
+        const i = plan.indexOf(p);
+        if (i >= 0) plan.splice(i, 1);
+        wrap.remove();
+      } else {
+        fillPlanRow(wrap, content, p);
+      }
+      syncPlanBar();
+      return;
+    }
+
+    // 标题和备注都空：这条等于没写
+    if (!title && !note) {
+      planUi.editId = null;
+      const i = plan.indexOf(p);
+      if (i >= 0) plan.splice(i, 1);
+      wrap.remove();
+      if (!p.id.startsWith('tmp-')) delPlanRow(p, true);
+      syncPlanBar();
+      return;
+    }
+
+    // 只有备注没有标题：服务端要求标题必填，界面上不能让它变成一次失败的写入。
+    // 这一条留着不存，回到只读并把提示写进备注位，用户补个标题就能存
+    if (!title) {
+      planUi.editId = null;
+      p.title = '';
+      p.note = note;
+      fillPlanRow(wrap, content, p);
+      const hint = wrap.querySelector('.pw-rt');
+      if (hint) {
+        hint.textContent = '先写个标题';
+        hint.classList.add('need-title');
+      }
+      syncPlanBar();
+      return;
+    }
+
+    const changed = title !== p.title || note !== (p.note || '');
+    p.title = title;
+    if (note) p.note = note; else delete p.note;
+    planUi.editId = null;
+    fillPlanRow(wrap, content, p);
+    syncPlanBar();
+    if (changed) savePlanRow(p, true);
+  };
+  const commit = () => leave(true);
+
+  planCommit = commit;
+
+  // 焦点在编辑区内部移动（标题 ↔ 备注）不算离开
+  box.addEventListener('focusout', (e) => {
+    if (box.contains(e.relatedTarget)) return;
+    leave(true);
+  });
+
+  for (const el of [t, n]) {
+    el.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); leave(true); }
+      if (e.key === 'Escape') { e.preventDefault(); leave(false); }
+      if (e.key === 'ArrowDown' && el === t) { e.preventDefault(); n.focus(); }
+      if (e.key === 'ArrowUp' && el === n) { e.preventDefault(); t.focus(); }
+    });
+    el.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  // 光标落在末尾，不选中全文：改备注时不想整段被替换
+  setTimeout(() => {
+    t.focus();
+    const len = t.value.length;
+    try { t.setSelectionRange(len, len); } catch (_) {}
+  }, 20);
+
+  return box;
+}
+
+function syncPlanBar() {
+  if (!planEl) return;
+  const done = plan.filter((p) => p.doneAt).length;
+  const n = planEl.querySelector('.pw-bar .n');
+  if (n) n.textContent = plan.length ? `${done}/${plan.length}` : '空';
+}
+
+function flashPlanSaved() {
+  if (!planEl) return;
+  const s = planEl.querySelector('.pw-bar .saved');
+  if (!s) return;
+  s.classList.add('on');
+  clearTimeout(flashPlanSaved.timer);
+  flashPlanSaved.timer = setTimeout(() => s.classList.remove('on'), 1100);
+}
+
+/* ---- 规划的写操作：都走同一条写队列，与服务端串行对齐 ---- */
+
+function setPlanDone(p, done) {
+  if (done) p.doneAt = new Date().toISOString();
+  else delete p.doneAt;
+
+  // 只改这一行的外观：整窗重画会把节点换掉，正在进行的点击会落在死节点上
+  if (planEl) {
+    const row = planEl.querySelector(`.pw-row[data-id="${p.id}"]`);
+    if (row) {
+      row.classList.toggle('done', !!p.doneAt);
+      const chk = row.querySelector('.pw-chk');
+      if (chk) {
+        chk.setAttribute('aria-pressed', String(!!p.doneAt));
+        chk.setAttribute('aria-label', p.doneAt ? '取消完成' : '标记完成');
+        chk.title = p.doneAt ? '取消完成' : '标记完成';
+      }
+    }
+  }
+  syncPlanBar();
+
+  enqueueWrite(async () => {
+    if (p.id.startsWith('tmp-')) return;   // 还没落盘的新条目，等它建完自己带上状态
+    await api(`/api/plan/${p.id}`, { method: 'PATCH', body: JSON.stringify({ done }) });
+    weekAhead.clear();
+    aheadPlan.clear();
+  });
+}
+
+function savePlanRow(p, flash) {
+  // 没有标题就不发请求：服务端会 400，界面会白刷一次
+  if (!p.title) return;
+
+  const body = { title: p.title, note: p.note || '' };
+
+  enqueueWrite(async () => {
+    if (p.id.startsWith('tmp-')) {
+      // 新建：先 POST 拿到真 id，再把占位对象换成服务端返回的那一条。
+      // 建的时候若已经勾过，把完成状态一并带上，否则刷新后勾就丢了
+      const r = await api('/api/plan', {
+        method: 'POST',
+        body: JSON.stringify({
+          week: isoWeek(weekStart),
+          title: p.title,
+          note: p.note || '',
+          done: !!p.doneAt,
+        }),
+      });
+      const i = plan.indexOf(p);
+      if (i >= 0) plan[i] = r.plan;
+      renderPlanWin();
+      return;
+    }
+    await api(`/api/plan/${p.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    weekAhead.clear();
+    aheadPlan.clear();
+    if (flash) flashPlanSaved();
+  });
+}
+
+function addPlanRow() {
+  flushPlanEdit();
+  const p = { id: 'tmp-' + Date.now().toString(36), week: isoWeek(weekStart), title: '', order: plan.length };
+  plan.push(p);
+  planUi.editId = p.id;
+  planUi.min = false;
+  renderPlanWin();
+}
+
+function delPlanRow(p, quiet) {
+  const i = plan.indexOf(p);
+  if (i >= 0) plan.splice(i, 1);
+  if (planUi.editId === p.id) planUi.editId = null;
+  if (!quiet) renderPlanWin();
+  if (p.id.startsWith('tmp-')) { syncPlanBar(); return; }
+
+  enqueueWrite(async () => {
+    await api(`/api/plan/${p.id}`, { method: 'DELETE' });
+    weekAhead.clear();
+    aheadPlan.clear();
+  });
+}
+
+/* ---- 拖动与缩放 ---- */
+
+function planDragify(el, handle) {
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // 拿起标题栏就先退出编辑：正在改的内容按失焦规则保存。
+    // 这一句必须在「排除按钮」之前 —— 点标题栏上的图钉/最小化/关闭，
+    // 也该先落地正在编辑的那一条，否则按钮自己的 renderPlanWin 会把它销毁
+    flushPlanEdit();
+    if (e.target.closest('button')) return;
+    const r = el.getBoundingClientRect();
+    planUi.drag = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top };
+    try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+    el.classList.add('dragging');
+    e.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    const d = planUi.drag;
+    if (!d || e.pointerId !== d.id) return;
+    planUi.x = Math.max(6, Math.min(e.clientX - d.dx, window.innerWidth - el.offsetWidth - 6));
+    planUi.y = Math.max(6, Math.min(e.clientY - d.dy, window.innerHeight - el.offsetHeight - 6));
+    el.style.left = planUi.x + 'px';
+    el.style.top = planUi.y + 'px';
+  });
+
+  const end = (e) => {
+    const d = planUi.drag;
+    if (!d || e.pointerId !== d.id) return;
+    planUi.drag = null;
+    el.classList.remove('dragging');
+    try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+}
+
+function planResizify(el, rz) {
+  rz.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const r = el.getBoundingClientRect();
+    planUi.rz = { id: e.pointerId, w: r.width, h: r.height, x0: e.clientX, y0: e.clientY };
+    try { rz.setPointerCapture(e.pointerId); } catch (_) {}
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  rz.addEventListener('pointermove', (e) => {
+    const d = planUi.rz;
+    if (!d || e.pointerId !== d.id) return;
+    planUi.w = Math.max(268, Math.min(window.innerWidth - planUi.x - 8, d.w + (e.clientX - d.x0)));
+    planUi.h = Math.max(180, Math.min(window.innerHeight - planUi.y - 8, d.h + (e.clientY - d.y0)));
+    el.style.width = planUi.w + 'px';
+    el.style.height = planUi.h + 'px';
+  });
+  const end = (e) => {
+    if (!planUi.rz || e.pointerId !== planUi.rz.id) return;
+    planUi.rz = null;
+    try { rz.releasePointerCapture(e.pointerId); } catch (_) {}
+  };
+  rz.addEventListener('pointerup', end);
+  rz.addEventListener('pointercancel', end);
+}
+
+/* ---- 开合：顶栏按钮 / 点外面 / Esc ---- */
+
+/* 安排弹框进 top layer 时规划窗让位；关掉弹框再回来。
+   记的是「之前开着没有」，所以没开过就不会被无端弹出来 */
+let planSuspended = false;
+
+function suspendPlanWin() {
+  if (!planUi.open) return;
+  flushPlanEdit();
+  planSuspended = true;
+  planUi.open = false;
+  renderPlanWin();
+  renderHeader();
+}
+
+function resumePlanWin() {
+  if (!planSuspended) return;
+  planSuspended = false;
+  planUi.open = true;
+  renderPlanWin();
+  renderHeader();
+}
+
+function togglePlanWin() {
+  flushPlanEdit();
+  planUi.open = !planUi.open;
+  if (planUi.open) planUi.min = false;
+  renderPlanWin();
+  renderHeader();
+}
+
+$('planBtn').addEventListener('click', togglePlanWin);
+
+// 未置顶时点外面收起；置顶后点别处既不沉也不关
+document.addEventListener('pointerdown', (e) => {
+  if (!planUi.open || planUi.pinned) return;
+  // 顶栏（翻周、回本周、规划按钮）不算「外面」：翻周时窗口该跟着换内容，而不是被关掉
+  if (e.target.closest('.pw, .bar')) return;
+  if (planUi.editId) return;
+  planUi.open = false;
+  renderPlanWin();
+  renderHeader();
+}, true);
+
+window.addEventListener('resize', () => {
+  if (!planUi.open || planUi.x === null) return;
+  planUi.x = Math.max(6, Math.min(planUi.x, window.innerWidth - 300));
+  planUi.y = Math.max(6, Math.min(planUi.y, window.innerHeight - 180));
+  renderPlanWin();
+});
 
 /* ---------------- 编辑 ---------------- */
 
@@ -475,6 +1055,9 @@ function openEditor(date, item) {
   if (radio) radio.checked = true;
   $('delBtn').hidden = !item;
   $('err').hidden = true;
+  // <dialog> 的 showModal 会进原生 top layer，任何 z-index 都压不过它。
+  // 所以「置顶」遇到编辑安排时只能让位：先收掉规划窗，关掉弹框再恢复
+  suspendPlanWin();
   $('editor').showModal();
   fitEditor();
   setTimeout(() => { $('fTitle').focus(); fitEditor(); }, 40);
@@ -483,6 +1066,7 @@ function openEditor(date, item) {
 function closeEditor() {
   $('editor').close();
   editState = null;
+  resumePlanWin();
 }
 
 /* 键盘弹起时布局视口不变（dvh 也不变），CSS 居中会把框底留在键盘底下。
@@ -639,10 +1223,14 @@ function prefetchWeeks() {
   for (const n of [-1, 1]) {
     const from = ymd(addDays(weekStart, n * 7));
     const to = ymd(addDays(weekStart, n * 7 + 6));
+    const wk = isoWeek(addDays(weekStart, n * 7));
     const key = from + '|' + to;
     if (weekAhead.has(key)) continue;
-    api(`/api/items?from=${from}&to=${to}`)
-      .then((d) => { weekAhead.set(key, d.items || []); })
+    api(`/api/items?from=${from}&to=${to}&week=${wk}`)
+      .then((d) => {
+        weekAhead.set(key, d.items || []);
+        aheadPlan.set(key, d.plan || []);
+      })
       .catch(() => {});
   }
 }
@@ -880,6 +1468,7 @@ function setBusy(on) {
 
 // 翻周时停在同一个星期几上，手机端不会跳回周一
 function shiftWeek(n, quiet) {
+  flushPlanEdit();   // 翻走之前把正在改的那条落地，否则新一周的数据回来会盖掉它
   const idx = Math.round((parseYmd(phoneDate) - weekStart) / 86400000);
   weekStart = addDays(weekStart, n * 7);
   phoneDate = ymd(addDays(weekStart, Math.min(6, Math.max(0, idx))));
@@ -893,6 +1482,7 @@ function shiftWeek(n, quiet) {
 }
 
 function shiftDay(n) {
+  flushPlanEdit();
   const next = addDays(parseYmd(phoneDate), n);
   phoneDate = ymd(next);
   const ws = startOfWeek(next);
@@ -903,6 +1493,7 @@ function shiftDay(n) {
 }
 
 function goToday() {
+  flushPlanEdit();
   weekStart = startOfWeek(new Date());
   phoneDate = TODAY;
   renderHeader();
@@ -923,6 +1514,15 @@ document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea')) return;
   if ($('editor').open) return;
   if (drag) return;
+  // 规划窗开着时方向键留给它：Esc 收起，左右键不翻周
+  if (planUi.open) {
+    if (e.key === 'Escape' && !planUi.editId) {
+      planUi.open = false;
+      renderPlanWin();
+      renderHeader();
+    }
+    return;
+  }
   if (e.key === 'ArrowLeft') shiftWeek(-1);
   if (e.key === 'ArrowRight') shiftWeek(1);
 });

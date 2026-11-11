@@ -1261,3 +1261,314 @@ body.dragging .card{cursor:grabbing;pointer-events:none}
   to{opacity:1;transform:none}
 }
 .wk-key.flip,.phone-day.flip{animation:flip-in 240ms ease}
+
+/* ============================ 周规划 ============================
+   一个浮在周轴上的小窗：拖动标题栏移动，图钉置顶，勾选即完成。
+   视觉是「素纸」：不加描边与虚线，只留一条极细的边和柔影，
+   与周轴那张纸区分开 —— 它是浮起来的一张便条，不是第二张纸。 */
+
+/* 图标尺寸必须显式给：只有 viewBox 的 SVG 会按 300×150 渲染，
+   一个 14px 的加号能撑成 281px，把列表挤到 4px 高 */
+.ico{
+  display:block;
+  width:14px;
+  height:14px;
+  flex:none;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.7;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+.ico.sm{width:12px;height:12px}
+
+.pw{
+  position:fixed;
+  z-index:45;
+  display:flex;
+  flex-direction:column;
+  background:var(--note);
+  border-radius:15px;
+  overflow:hidden;
+  box-shadow:
+    0 0 0 1px rgba(26,26,24,.13),
+    0 14px 36px -10px rgba(26,26,24,.26),
+    0 3px 8px rgba(26,26,24,.06);
+  transition:box-shadow 200ms ease;
+}
+[data-theme="dark"] .pw{
+  box-shadow:
+    0 0 0 1px rgba(216,212,192,.18),
+    0 14px 36px -10px rgba(0,0,0,.7),
+    0 3px 8px rgba(0,0,0,.35);
+}
+/* 置顶：抬到周轴之上，阴影加深，点别处既不沉也不关 */
+.pw.pinned{
+  z-index:60;
+  box-shadow:
+    0 0 0 1px rgba(26,26,24,.2),
+    0 22px 48px -12px rgba(26,26,24,.34),
+    0 4px 10px rgba(26,26,24,.08);
+}
+[data-theme="dark"] .pw.pinned{
+  box-shadow:0 0 0 1px rgba(216,212,192,.3),0 22px 48px -12px rgba(0,0,0,.8);
+}
+/* 拖动中不要过渡，否则跟手会拖尾 */
+.pw.dragging{transition:none}
+
+.pw-bar{
+  flex:none;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:11px 8px 9px 16px;
+  cursor:grab;
+  touch-action:none;
+  user-select:none;
+}
+.pw.dragging .pw-bar{cursor:grabbing}
+.pw-bar .t{
+  font-size:12.5px;
+  font-weight:600;
+  letter-spacing:.09em;
+  color:var(--ink);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.pw-bar .n{
+  font-family:var(--font-num);
+  font-size:11px;
+  letter-spacing:.02em;
+  color:var(--ink-2);
+  font-variant-numeric:tabular-nums;
+  flex:none;
+}
+/* 「已保存」平时不占视线，存下时闪一下 */
+.pw-bar .saved{
+  font-size:10.5px;
+  letter-spacing:.06em;
+  color:var(--ink-3);
+  opacity:0;
+  transition:opacity 260ms ease;
+  flex:none;
+}
+.pw-bar .saved.on{opacity:1}
+.pw-bar .sp{margin-left:auto}
+
+.pw-btn{
+  width:26px;
+  height:26px;
+  display:grid;
+  place-items:center;
+  border-radius:7px;
+  color:var(--ink-2);
+  opacity:.5;
+  transition:opacity 130ms ease, color 130ms ease, background-color 130ms ease;
+}
+/* 置顶态常显；其余靠 :focus-visible 与 hover 增强，不把发现性押在悬停上 */
+.pw-btn.on,
+.pw-btn:focus-visible{opacity:1}
+.pw-btn.on{color:var(--ink);background:rgba(245,197,24,.34)}
+
+.pw-list{
+  flex:1;
+  min-height:0;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  padding:0 6px 4px;
+}
+.pw-list::-webkit-scrollbar{width:6px}
+.pw-list::-webkit-scrollbar-thumb{background:var(--ink-3);border-radius:3px}
+
+.pw-empty{
+  margin:0;
+  padding:6px 10px 12px;
+  font-size:11.5px;
+  line-height:1.7;
+  color:var(--ink-3);
+  letter-spacing:.02em;
+}
+
+/* ---- 一行：没有卡、没有分隔线，靠间距分条 ---- */
+
+.pw-row{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  padding:7px 10px 8px;
+  border-radius:9px;
+  cursor:pointer;
+  transition:background-color 130ms ease;
+}
+
+/* 勾：26px 命中区（触屏标准 ≥24px），18px 圆环 */
+.pw-chk{
+  flex:none;
+  width:26px;
+  height:26px;
+  display:grid;
+  place-items:center;
+  margin:-2px 0 -2px -2px;
+  cursor:pointer;
+}
+.pw-chk i{
+  width:18px;
+  height:18px;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+  box-shadow:inset 0 0 0 1.5px var(--ink-3);
+  transition:background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.pw-chk .ico{
+  width:10px;
+  height:10px;
+  opacity:0;
+  stroke-width:2.6;
+  transition:opacity 130ms ease;
+}
+.pw-row.done .pw-chk i{
+  background:var(--sun);
+  box-shadow:inset 0 0 0 1.5px var(--ink);
+  transform:scale(.96);
+}
+.pw-row.done .pw-chk .ico{opacity:1}
+
+/* 内容槽：只读与编辑轮流住在里面，行节点本身不换 */
+.pw-content{flex:1;min-width:0}
+.pw-rc{display:flex;flex-direction:column;gap:1px}
+
+/* 与安排卡同层级：标题 15px，备注 13px（对齐 .card .title / .card .note） */
+.pw-rt{
+  margin:0;
+  font-size:15px;
+  line-height:1.5;
+  letter-spacing:.005em;
+  color:var(--ink);
+  word-break:break-word;
+  transition:color 180ms ease;
+}
+.pw-rn{
+  margin:0;
+  font-size:13px;
+  line-height:1.55;
+  color:var(--ink-2);
+  word-break:break-word;
+}
+/* 只有备注、没标题：提示补标题，用警示色但不报错 */
+.pw-rt.need-title{
+  color:var(--danger);
+  font-size:13px;
+  font-style:italic;
+}
+/* 完成：标题与备注一起划掉（同 ADR-0007 的「划掉」） */
+.pw-row.done .pw-rt{
+  color:var(--ink-2);
+  text-decoration:line-through;
+  text-decoration-thickness:1.4px;
+  text-decoration-color:var(--ink-2);
+}
+.pw-row.done .pw-rn{
+  opacity:.6;
+  text-decoration:line-through;
+  text-decoration-thickness:1.1px;
+}
+
+/* 删除按钮：常显半透明，靠 hover / focus 加深 —— 触屏也点得到 */
+.pw-del{
+  flex:none;
+  width:24px;
+  height:24px;
+  display:grid;
+  place-items:center;
+  border-radius:6px;
+  color:var(--ink-3);
+  opacity:.45;
+  transition:opacity 130ms ease, color 130ms ease;
+}
+.pw-row:focus-within .pw-del{opacity:1}
+
+.pw-add{
+  flex:none;
+  display:flex;
+  align-items:center;
+  gap:7px;
+  margin:2px 12px 12px;
+  padding:7px 8px;
+  font-size:12.5px;
+  letter-spacing:.03em;
+  color:var(--ink-2);
+  border-radius:8px;
+  text-align:left;
+  transition:color 130ms ease, background-color 130ms ease;
+}
+
+/* 就地编辑：标题与备注各占一行 */
+.pw-edit{
+  flex:1;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+}
+.pw-edit input{
+  width:100%;
+  font:inherit;
+  color:inherit;
+  background:var(--field);
+  border:0;
+  border-radius:6px;
+  padding:3px 6px;
+  box-shadow:inset 0 0 0 1.4px var(--line);
+}
+.pw-edit input.t{font-size:15px}
+.pw-edit input.n{font-size:13px;color:var(--ink-2)}
+.pw-edit input:focus{outline:none;box-shadow:inset 0 0 0 1.4px var(--ink)}
+
+/* 缩放把手 */
+.pw-resize{
+  position:absolute;
+  right:0;
+  bottom:0;
+  width:18px;
+  height:18px;
+  cursor:nwse-resize;
+  touch-action:none;
+}
+.pw-resize::after{
+  content:"";
+  position:absolute;
+  right:4px;
+  bottom:4px;
+  width:7px;
+  height:7px;
+  border-right:1.5px solid var(--ink-3);
+  border-bottom:1.5px solid var(--ink-3);
+  border-radius:0 0 2px 0;
+}
+/* 最小化：只剩标题栏 */
+.pw.min .pw-list,
+.pw.min .pw-add{display:none}
+.pw.min{height:auto!important}
+.pw.min .pw-resize{display:none}
+
+/* 悬停只做增强：触屏没有 hover，静止态才是地基 */
+@media (hover:hover){
+  .pw-btn:hover{opacity:1;color:var(--ink);background:rgba(26,26,24,.06)}
+  .pw-chk:hover i{box-shadow:inset 0 0 0 1.5px var(--ink-2)}
+  .pw-row:hover{background:rgba(26,26,24,.038)}
+  .pw-add:hover{color:var(--ink);background:rgba(26,26,24,.045)}
+  .pw-del:hover{opacity:1;color:var(--danger)}
+  [data-theme="dark"] .pw-btn:hover{background:rgba(237,232,214,.1)}
+  [data-theme="dark"] .pw-row:hover{background:rgba(237,232,214,.055)}
+  [data-theme="dark"] .pw-add:hover{background:rgba(237,232,214,.07)}
+}
+
+/* 窄屏：贴住两侧，留出手指边距 */
+@media (max-width:900px){
+  .pw{max-width:calc(100vw - 20px)}
+  .pw-bar{padding:10px 6px 8px 13px}
+  .pw-row{padding:7px 6px 8px}
+  .pw-del{opacity:.5}
+}
