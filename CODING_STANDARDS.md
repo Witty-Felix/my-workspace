@@ -1,12 +1,21 @@
 # CODING_STANDARDS.md
 
-实现与评审共用的判断题。机械项不在这里：语法/行尾/镜像 COPY 归 `npm run check`，接口契约与渲染归 `npm run smoke`，交互归 `npm run smoke:drag` / `smoke:done` / `smoke:plan`，布局尺寸归 `scripts/lib/layout-check.mjs`。
+实现与评审共用的判断题。机械项不在这里：语法/行尾/镜像 COPY 归 `npm run check`，接口契约与渲染归 `npm run smoke`，交互归 `npm run smoke:drag` / `smoke:done` / `smoke:plan` / `smoke:plan-mobile`，布局尺寸归 `scripts/lib/layout-check.mjs`。
 
 ## 写操作
 
 - 用户动作先改本地，再发请求；失败 `toast` + `refresh()` 以服务端为准回滚。
 - 所有写走同一条 `enqueueWrite` 队列；后一次的位次必须照前一次改完的结果算。
 - 服务端先校验后写入；404 先于字段校验——对象不存在就不谈字段。
+- **一份数据如果渲染在多处，写操作之后要重画每一处**。桌面浮窗与手机整页是同一份 `plan` 的两套节点，只重画一处，另一处就留在旧状态：删掉的条目还在屏上、新建的条目会重复 POST（闭包还攥着旧的临时 id）。收一个 `refreshPlanViews()` 之类的统一入口，别在每个写函数里各画各的。
+
+## 两端
+
+- 桌面与手机是两套渲染，不是一套的两个断点。新增交互要么两端都写，要么明确写清「仅桌面 / 仅手机」并给出理由。
+- 手机端的入口不能只加在顶栏：窄屏下 `.nav` 是 `display:none`。要另给入口（`.phone-week` 那行，或 `.mtabs` 这样的独立标签）。
+- 浮层不能照搬：桌面用 `position:fixed` 漂着拖；手机上屏幕装不下、指头也点不准把手，要换成整页或底部抽屉。
+- 自检要跑窄视口：`smoke:plan` 测桌面、`smoke:plan-mobile` 测 390 宽，改了两端行为就两个都跑。
+- 点按判定一律用 `onTap` / `onTapOutside`（位移阈值 `TAP_SLOP`、按住上限 `TAP_HOLD`），不要直接挂 `pointerdown` 做点击。滑动页面必然先发 `pointerdown`，在那里触发动作就是「一擦过就误触」。
 
 ## 界面
 

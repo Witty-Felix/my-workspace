@@ -28,11 +28,21 @@ single-context 布局：根目录 `GLOSSARY.md` + `docs/adr/`。See `docs/agents
 
 一个会话里用户分多轮提出过 UI/交互要求的，动手改代码前先把**全部**要求列成 checklist 逐条核对——只对最后一轮是最常见的漏项来源。
 
+### 两端一起做
+
+**工作台有两套界面：桌面七列纸（`#week`）与手机当天纸（`#phone`）。任何界面改动都必须两端都做，交付前两端都看一眼。**
+
+这不是风格问题，是这个仓库最容易漏的一项：`@media (max-width:900px)` 里 `.nav{display:none}`、`.sheet{display:none}` —— 桌面上的按钮和容器在手机上根本不存在，而桌面截图一切正常，所以漏掉的永远不会自己暴露。2026-11-11 的周规划就是这样：顶栏「规划」按钮在手机端完全不可见。
+
+落地规则（入口怎么给、浮层怎么换、写操作要重画哪几处）见 `CODING_STANDARDS.md` 的「两端」与「写操作」两节。
+
 ### Checks
 
 改动前后跑 `cd app && npm run check && npm run smoke`；发布走 `cd app && npm run deploy`（不要手写 tar/ssh）。见 `docs/deploy.md`。
 
-**三个浏览器自检，改了对应行为就必须跑，都本地、都不进 CI**：`smoke:drag`（拖拽落位）、`smoke:done`（完成态）、`smoke:plan`（周规划，含触屏档与布局体检）。
+**看图不要自己拼 headless 命令**：用 `node app/scripts/shot.mjs <路径或URL> <输出目录> <宽> <高>`。它用 CDP Emulation 定视口（Windows 显示缩放会把 `--window-size` 放大成 492，Chromium 无头还有最小窗口宽度），量到视口不符就中止而不是出一张误导图；文件名带时间戳，避开看图工具的缓存。
+
+**四个浏览器自检，改了对应行为就必须跑，都本地、都不进 CI**：`smoke:drag`（拖拽落位）、`smoke:done`（完成态）、`smoke:plan`（周规划桌面）、`smoke:plan-mobile`（周规划手机端，390 宽）。新写自检用 `scripts/lib/harness.mjs`（带 `emulate` 定窄视口、`emptyData` 起空库），别手抄「起服务 → 等端口 → 连 CDP」那套样板。
 
 要起服务验证接口时，启停写进**同一条命令**：后台进程不跨命令存活，分开跑会拿到 `upstream connect failed`。参照 `scripts/smoke.sh` 的 `(cd app && exec env PORT=… node server.js) & … kill $!` 写法。
 
