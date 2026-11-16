@@ -11,10 +11,6 @@ services:
       AUTH: ${AUTH:-basic}
       AUTH_USER: ${AUTH_USER}
       AUTH_PASS: ${AUTH_PASS}
-      # 助手：没配 AI_KEY 时 /api/chat 返回 503，其余功能不受影响
-      AI_KEY: ${AI_KEY:-}
-      AI_BASE: ${AI_BASE:-https://api.deepseek.com}
-      AI_MODEL: ${AI_MODEL:-deepseek-chat}
     volumes:
       - ./data:/app/data
     logging:

@@ -1,60 +1,51 @@
-@@ -51,6 +51,7 @@
- </button>
- <button class="ic" id="next" aria-label="下一周">›</button>
- <button class="tag" id="planBtn" aria-pressed="false">规划</button>
-+<button class="tag" id="dailyBtn" aria-pressed="false" title="每日必做（还差 4 项）">必做</button>
- <button class="tag on" id="todayBtn">本周</button>
- </nav>
- <label class="hs hs--sm" title="白天 / 夜间">
-@@ -104,6 +105,27 @@
- </div>
+@@ -106,26 +106,9 @@
  </div>
  </label>
-+<!-- 每日必做入口（手机）。桌面那个是顶栏「必做」标签，窄屏 .nav 整条隐藏，
-+入口不能跟着消失（同 mChatBtn 的理由，ADR-0010） -->
-+<button class="ic mdaily-btn" id="mDailyBtn" aria-label="每日必做" title="每日必做">日</button>
-+<!-- 助手入口（手机）。桌面那个是右下角立方体，见 body 末尾。
-+放在 .bar 里而不是 .nav 里：窄屏 .nav 整条 display:none，入口不能跟着消失 -->
-+<button class="mchat-btn" id="mChatBtn" aria-label="跟我说话，我帮你写进周轴" title="跟我说话">
-+<span class="cube-3d">
-+<span class="cube-top">
-+</span>
-+<span class="cube-wrapper">
-+<span class="cube-span" style="--i:0">
-+</span>
-+<span class="cube-span" style="--i:1">
-+</span>
-+<span class="cube-span" style="--i:2">
-+</span>
-+<span class="cube-span" style="--i:3">
-+</span>
-+</span>
-+</span>
-+</button>
+ <!-- 每日必做入口（手机）。桌面那个是顶栏「必做」标签，窄屏 .nav 整条隐藏，
+-入口不能跟着消失（同 mChatBtn 的理由，ADR-0010） -->
++入口不能跟着消失（ADR-0010） -->
+ <button class="ic mdaily-btn" id="mDailyBtn" aria-label="每日必做" title="每日必做">日</button>
+-<!-- 助手入口（手机）。桌面那个是右下角立方体，见 body 末尾。
+-放在 .bar 里而不是 .nav 里：窄屏 .nav 整条 display:none，入口不能跟着消失 -->
+-<button class="mchat-btn" id="mChatBtn" aria-label="跟我说话，我帮你写进周轴" title="跟我说话">
+-<span class="cube-3d">
+-<span class="cube-top">
+-</span>
+-<span class="cube-wrapper">
+-<span class="cube-span" style="--i:0">
+-</span>
+-<span class="cube-span" style="--i:1">
+-</span>
+-<span class="cube-span" style="--i:2">
+-</span>
+-<span class="cube-span" style="--i:3">
+-</span>
+-</span>
+-</span>
+-</button>
++<!-- 手机端顶栏只留每日必做入口；窄屏 .nav 整条 display:none，入口不能跟着消失 -->
  </header>
  <main class="stage">
  <section class="sheet" id="week" aria-label="本周安排">
-@@ -320,5 +342,23 @@
- </div>
- </form>
+@@ -344,21 +327,5 @@
  </dialog>
-+<div id="dailyHost">
-+</div>
-+<button class="cube-entry" id="cubeEntry" aria-label="打开助手，把话写成安排" title="跟我说话">
-+<span class="cube-3d">
-+<span class="cube-top">
-+</span>
-+<span class="cube-wrapper">
-+<span class="cube-span" style="--i:0">
-+</span>
-+<span class="cube-span" style="--i:1">
-+</span>
-+<span class="cube-span" style="--i:2">
-+</span>
-+<span class="cube-span" style="--i:3">
-+</span>
-+</span>
-+</span>
-+</button>
+ <div id="dailyHost">
+ </div>
+-<button class="cube-entry" id="cubeEntry" aria-label="打开助手，把话写成安排" title="跟我说话">
+-<span class="cube-3d">
+-<span class="cube-top">
+-</span>
+-<span class="cube-wrapper">
+-<span class="cube-span" style="--i:0">
+-</span>
+-<span class="cube-span" style="--i:1">
+-</span>
+-<span class="cube-span" style="--i:2">
+-</span>
+-<span class="cube-span" style="--i:3">
+-</span>
+-</span>
+-</span>
+-</button>
  </body>
  </html>

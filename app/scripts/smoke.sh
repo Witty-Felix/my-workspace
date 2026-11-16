@@ -81,9 +81,11 @@ fi
 for f in index.html app.js style.css; do
   git -C "$ROOT" show "$BASE_REF:app/public/$f" > "$SCRATCH/old/public/$f" 2>/dev/null || true
 done
-# 基准版本若有 lib/，按原结构取出（服务端 require 与 /domain.js 路由都指向它）
-git -C "$ROOT" show "$BASE_REF:app/lib/domain.js" > "$SCRATCH/old/lib/domain.js" 2>/dev/null || rm -f "$SCRATCH/old/lib/domain.js"
-git -C "$ROOT" show "$BASE_REF:app/lib/store.js" > "$SCRATCH/old/lib/store.js" 2>/dev/null || rm -f "$SCRATCH/old/lib/store.js"
+# 基准版本若有 lib/，按原结构整目录取出（服务端 require 与 /domain.js 路由都指向它）。
+# 逐个文件列名字会漏：HEAD 的 server.js require 什么取决于 HEAD 那一刻有哪些模块
+git -C "$ROOT" ls-tree --name-only "$BASE_REF:app/lib" 2>/dev/null | while read -r f; do
+  git -C "$ROOT" show "$BASE_REF:app/lib/$f" > "$SCRATCH/old/lib/$f" 2>/dev/null || rm -f "$SCRATCH/old/lib/$f"
+done
 
 node "$HERE/lib/fixture.js" "$SCRATCH/data-old/data.json" >/dev/null
 node "$HERE/lib/fixture.js" "$SCRATCH/data-new/data.json" >/dev/null

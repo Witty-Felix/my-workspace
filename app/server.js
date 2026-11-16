@@ -7,8 +7,6 @@ const crypto = require('crypto');
 const { SLOTS, compareArrangements, groupKey, byOrder, normalizeOrder, placeItem } = require('./lib/domain');
 // 存储层：安排数据怎么落盘、怎么读回（app/lib/store.js）
 const store = require('./lib/store');
-// 助手：把口语变成草案。只出草案不落库（app/lib/assistant.js）
-const assistant = require('./lib/assistant');
 
 const PORT = Number(process.env.PORT || 8090);
 const AUTH_USER = process.env.AUTH_USER || '';
@@ -345,22 +343,6 @@ app.patch('/api/duties/:key', (req, res) => {
   res.json({ ok: true });
 });
 
-
-/* ---------- 助手 ----------
-   只做「白话 → 草案」。草案不落库：写库仍走上面那几个 REST 动词，
-   由用户在界面上确认之后逐条发出。所以这条路由只读，不动 data.json。 */
-
-app.post('/api/chat', async (req, res, next) => {
-  const b = req.body || {};
-  if (!Array.isArray(b.messages)) return res.status(400).json({ error: 'messages 需为数组' });
-  try {
-    const out = await assistant.ask(b.messages);
-    res.json(out);
-  } catch (err) {
-    if (err instanceof assistant.AssistantError) return res.status(err.status).json({ error: err.message });
-    next(err);
-  }
-});
 
 app.get('/api/export', (req, res) => {
   res.set('Content-Disposition', 'attachment; filename="workbench-data.json"');

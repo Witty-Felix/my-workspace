@@ -180,22 +180,6 @@ docker start workbench
 
 也可以在浏览器里访问 `/api/export` 直接下载当前全量数据。
 
-## 助手（右下角立方体）
-
-窗内的对话靠 `POST /api/chat` 走一次模型调用。**不配 `AI_KEY` 时这条路由返回 503，工作台其余功能完全不受影响**（立方体照样点得开，只是发出去会得到「还没配置密钥」的提示）。
-
-在 `/opt/workbench/.env` 里加三行（`app/.env.example` 有模板）：
-
-```bash
-printf 'AI_KEY=sk-你的key\nAI_BASE=https://api.deepseek.com\nAI_MODEL=deepseek-chat\n' >> /opt/workbench/.env
-cd /opt/workbench && docker compose up -d
-```
-
-- `AI_BASE` 填任何 OpenAI 兼容端点都能用（只用到 `/chat/completions`）。
-- 换模型只改 `AI_MODEL`，提示词与校验层不用动（见 ADR-0009）。
-- 这条路由是唯一会花钱的地方：消息条数 / 单词长度 / 草案条数都在服务端截断。
-- 密钥只在容器里，浏览器拿不到；上游报错正文（可能带 key 片段）不回给前端。
-
 ## 回滚
 
 镜像每次构建都会覆盖 `workbench:latest`。要能回滚，构建前先打标签：

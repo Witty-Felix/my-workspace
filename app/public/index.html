@@ -119,22 +119,10 @@
   </label>
 
   <!-- 每日必做入口（手机）。桌面那个是顶栏「必做」标签，窄屏 .nav 整条隐藏，
-       入口不能跟着消失（同 mChatBtn 的理由，ADR-0010） -->
+       入口不能跟着消失（ADR-0010） -->
   <button class="ic mdaily-btn" id="mDailyBtn" aria-label="每日必做" title="每日必做">日</button>
 
-  <!-- 助手入口（手机）。桌面那个是右下角立方体，见 body 末尾。
-       放在 .bar 里而不是 .nav 里：窄屏 .nav 整条 display:none，入口不能跟着消失 -->
-  <button class="mchat-btn" id="mChatBtn" aria-label="跟我说话，我帮你写进周轴" title="跟我说话">
-    <span class="cube-3d">
-      <span class="cube-top"></span>
-      <span class="cube-wrapper">
-        <span class="cube-span" style="--i:0"></span>
-        <span class="cube-span" style="--i:1"></span>
-        <span class="cube-span" style="--i:2"></span>
-        <span class="cube-span" style="--i:3"></span>
-      </span>
-    </span>
-  </button>
+  <!-- 手机端顶栏只留每日必做入口；窄屏 .nav 整条 display:none，入口不能跟着消失 -->
 </header>
 
 <main class="stage">
@@ -193,19 +181,6 @@
 
 <!-- 每日必做：桌面 B 抽屉 / 手机 A 抽层。窗口只在打开时才建，宿主常驻两个空 div -->
 <div id="dailyHost"></div>
-
-<!-- 助手入口（桌面）：纸外右下角那枚立方体。窗口只在打开时才建 -->
-<button class="cube-entry" id="cubeEntry" aria-label="打开助手，把话写成安排" title="跟我说话">
-  <span class="cube-3d">
-    <span class="cube-top"></span>
-    <span class="cube-wrapper">
-      <span class="cube-span" style="--i:0"></span>
-      <span class="cube-span" style="--i:1"></span>
-      <span class="cube-span" style="--i:2"></span>
-      <span class="cube-span" style="--i:3"></span>
-    </span>
-  </span>
-</button>
 
 <script src="domain.js"></script>
 <script src="app.js"></script>
