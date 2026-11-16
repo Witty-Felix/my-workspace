@@ -537,6 +537,7 @@ function render() {
   renderPhone();
   renderPlanWin();
   renderPhonePlan();
+  renderDaily();
   // 翻周/翻天重建列表后，之前高亮的格子节点已不存在
   if (drag && drag.active) clearHotZone();
 }
@@ -1887,6 +1888,828 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'ArrowLeft') shiftWeek(-1);
   if (e.key === 'ArrowRight') shiftWeek(1);
+});
+
+/* ============================ 每日必做 ============================
+   四项每天固定：戒色 / 读书 / 离开整理桌面 / 每日一善。与「安排」「周规划」
+   是第三种内容单位：不落位、不归属周，只归属到某一天（见 ADR-0010）。
+
+   两端刻意不同形（CODING_STANDARDS《两端》）：
+     桌面 = B 抽屉（右侧全高）：进度环 + 每卡连续天数与近 7 日点阵，重「轨迹激励」
+     手机 = A 抽层（底部升起）：四行大勾选，重「睡前快速过一遍」
+   共用同一份 duties 数据、同一条写队列。
+
+   「每日更新」是查询语义：取某天就按 day 过滤，不做清零删除。
+   近 7 日点阵由 GET /api/duties?from&to 一次带回，不逐天发请求。 */
+
+const DUTIES = [
+  { key: 'jieSe', name: '戒色', glyph: '静' },
+  { key: 'read', name: '读书', glyph: '读' },
+  { key: 'tidy', name: '离开整理桌面', glyph: '整' },
+  { key: 'kind', name: '每日一善', glyph: '善' },
+];
+
+// 每日必做的界面状态。窗口只在打开时渲染；勾选只刷外观不整窗重画
+// （按下与松手之间不许重建节点 —— CODING_STANDARDS《界面》）
+const dailyUi = {
+  open: false,
+  // 今天四项的完成时间戳，key -> doneAt。隔日由服务端按 day 过滤，天然清零
+  today: {},
+  // 近 7 日打卡记录，key -> [6 天前..昨天..今天] 的布尔数组（点阵用）
+  week: {},
+};
+
+function dailyTodayYmd() {
+  return ymd(new Date());
+}
+
+// 首次打开/跨天重开时拉数据。两个请求：今天（勾选态）+ 近7天（点阵）。
+// 今天的也能从 week 里取，但分开发能让「打开即勾选态」不等第二个请求
+async function loadDaily() {
+  const day = dailyTodayYmd();
+  const from = ymd(addDays(new Date(), -6));
+  const to = day;
+  try {
+    const [today, week] = await Promise.all([
+      api(`/api/duties?day=${day}`),
+      api(`/api/duties?from=${from}&to=${to}`),
+    ]);
+    if (dailyTodayYmd() !== day) return;   // 打开期间跨天了，扔掉旧数据
+    dailyUi.today = {};
+    for (const d of today.duties || []) dailyUi.today[d.key] = d.doneAt;
+    // 近 7 天点阵：服务端返回区间内的记录，这里摊成 key -> 7 布尔
+    dailyUi.week = {};
+    for (const it of DUTIES) dailyUi.week[it.key] = new Array(7).fill(false);
+    for (const d of week.duties || []) {
+      const idx = Math.round((parseYmd(d.day) - parseYmd(from)) / 86400000);
+      if (idx >= 0 && idx < 7 && dailyUi.week[d.key]) dailyUi.week[d.key][idx] = true;
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function openDaily() {
+  dailyUi.open = true;
+  // 先拉数据再一次成型，不画空窗：网络慢时宁可晚半拍，也别闪一下空→满
+  await loadDaily();
+  renderDaily();
+}
+
+function closeDaily() {
+  dailyUi.open = false;
+  renderDaily();
+}
+
+// 勾/取消一项。乐观写：先改本地外观，PATCH 失败 toast + 重拉以服务端为准
+function setDailyDone(key, done) {
+  if (done) {
+    if (!dailyUi.today[key]) dailyUi.today[key] = new Date().toISOString();
+  } else {
+    delete dailyUi.today[key];
+  }
+  // 近 7 天点阵的最后一位就是今天，同步改，不用重拉
+  const w = dailyUi.week[key];
+  if (w) w[6] = !!done;
+  paintDaily();
+
+  enqueueWrite(async () => {
+    await api(`/api/duties/${key}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ day: dailyTodayYmd(), done }),
+    });
+    weekAhead.clear();
+  });
+}
+
+// 打开期间跨天（午夜过点）：数据归属变了，重拉一遍。关着就不用管，下次打开自然新拉
+setInterval(() => {
+  if (!dailyUi.open) return;
+  if (!dailyUi._day || dailyUi._day !== dailyTodayYmd()) {
+    dailyUi._day = dailyTodayYmd();
+    loadDaily().then(renderDaily);
+  }
+}, 30000);
+
+/* ---- 渲染：桌面 B 抽屉 / 手机 A 抽层，同一份状态两套节点 ---- */
+
+function renderDaily() {
+  const host = $('dailyHost');
+  host.textContent = '';   // 重建前必清：appendChild 叠层是原型期踩过的「越勾越黑」
+  if (!dailyUi.open) {
+    paintDailyEntries();
+    return;
+  }
+  if (isNarrow()) renderDailySheet(host);
+  else renderDailyDrawer(host);
+  // 新节点是白纸：完成态、进度环、点阵全靠 paint 补上（render 只搭骨架）
+  paintDaily();
+}
+
+// 顶栏入口的完成态：四项全勾时点亮。抽屉开着也算开着
+function paintDailyEntries() {
+  const done = DUTIES.filter((it) => dailyUi.today[it.key]).length;
+  const full = done === DUTIES.length;
+  const dk = $('dailyBtn');
+  if (dk) {
+    dk.classList.toggle('on', dailyUi.open || full);
+    dk.setAttribute('aria-pressed', String(dailyUi.open));
+    dk.title = full ? '今日四项已齐' : '每日必做（还差 ' + (DUTIES.length - done) + ' 项）';
+    dk.textContent = full ? '必做 ✓' : '必做';
+  }
+  const mk = $('mDailyBtn');
+  if (mk) {
+    mk.classList.toggle('ok', full);
+    mk.textContent = full ? '✓' : '日';
+    mk.title = full ? '今日四项已齐' : '每日必做';
+  }
+}
+
+/* ---- 桌面：B 抽屉（右侧全高，进度环 + 连续天数 + 近 7 日点阵） ---- */
+
+function renderDailyDrawer(host) {
+  const back = document.createElement('div');
+  back.className = 'dd-back';
+  back.addEventListener('click', closeDaily);
+  host.appendChild(back);
+
+  const el = document.createElement('div');
+  el.className = 'dd-drawer';
+
+  const head = document.createElement('div');
+  head.className = 'dd-head';
+  const top = document.createElement('div');
+  top.className = 'dd-top';
+  const t = document.createElement('span');
+  t.className = 'dd-title';
+  t.textContent = '每日必做';
+  const date = document.createElement('span');
+  date.className = 'dd-date';
+  date.textContent = monthDay(new Date());
+  const x = document.createElement('button');
+  x.className = 'dd-x';
+  x.textContent = '✕';
+  x.setAttribute('aria-label', '收起每日必做');
+  x.addEventListener('click', closeDaily);
+  top.append(t, date, x);
+  head.appendChild(top);
+
+  const ringrow = document.createElement('div');
+  ringrow.className = 'dd-ringrow';
+  const R = 26, C = 2 * Math.PI * R;
+  const wrap = document.createElement('span');
+  wrap.className = 'dd-ringwrap';
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 64 64');
+  svg.setAttribute('class', 'dd-ring');
+  const track = document.createElementNS(SVG_NS, 'circle');
+  track.setAttribute('cx', '32'); track.setAttribute('cy', '32'); track.setAttribute('r', R);
+  track.setAttribute('class', 'track');
+  const fill = document.createElementNS(SVG_NS, 'circle');
+  fill.setAttribute('cx', '32'); fill.setAttribute('cy', '32'); fill.setAttribute('r', R);
+  fill.setAttribute('class', 'fill');
+  fill.setAttribute('stroke-dasharray', C);
+  fill.setAttribute('stroke-dashoffset', C);   // 进度由 paintDaily 按勾选数改
+  svg.append(track, fill);
+  const num = document.createElement('span');
+  num.className = 'dd-ringnum';
+  wrap.append(svg, num);
+  const sum = document.createElement('span');
+  sum.className = 'dd-sum';
+  ringrow.append(wrap, sum);
+  head.appendChild(ringrow);
+  el.appendChild(head);
+
+  const list = document.createElement('div');
+  list.className = 'dd-list';
+  for (const it of DUTIES) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'dd-card';
+    card.dataset.key = it.key;
+    card.setAttribute('aria-pressed', 'false');
+
+    const badge = document.createElement('span');
+    badge.className = 'dd-badge';
+    badge.textContent = it.glyph;
+    const main = document.createElement('span');
+    main.className = 'dd-main';
+    const line1 = document.createElement('span');
+    line1.className = 'dd-line1';
+    const name = document.createElement('span');
+    name.className = 'dd-name';
+    name.textContent = it.name;
+    const streak = document.createElement('span');
+    streak.className = 'dd-streak';
+    line1.append(name, streak);
+    const dots = document.createElement('span');
+    dots.className = 'dd-dots';
+    for (let i = 0; i < 7; i++) {
+      const dot = document.createElement('i');
+      dot.className = 'dd-dot' + (i === 6 ? ' today' : '');
+      dots.appendChild(dot);
+    }
+    main.append(line1, dots);
+    card.append(badge, main);
+    card.addEventListener('click', () => setDailyDone(it.key, !dailyUi.today[it.key]));
+    list.appendChild(card);
+  }
+  el.appendChild(list);
+  host.appendChild(el);
+}
+
+// 连续天数：点阵从今天往回数连续命中
+function dailyStreak(key) {
+  const w = dailyUi.week[key] || [];
+  let n = 0;
+  for (let i = 6; i >= 0; i--) {
+    if (!w[i]) break;
+    n++;
+  }
+  return n;
+}
+
+/* ---- 手机：A 抽层（底部升起，四行大勾选） ---- */
+
+function renderDailySheet(host) {
+  const back = document.createElement('div');
+  back.className = 'dd-back dd-back--sheet';
+  back.addEventListener('click', closeDaily);
+  host.appendChild(back);
+
+  const el = document.createElement('div');
+  el.className = 'dd-sheet';
+
+  const bar = document.createElement('div');
+  bar.className = 'dd-sheet-bar';
+  const t = document.createElement('span');
+  t.className = 'dd-title';
+  t.textContent = '每日必做';
+  const date = document.createElement('span');
+  date.className = 'dd-date';
+  date.textContent = monthDay(new Date());
+  const cnt = document.createElement('span');
+  cnt.className = 'dd-cnt';
+  const x = document.createElement('button');
+  x.className = 'dd-x';
+  x.textContent = '✕';
+  x.setAttribute('aria-label', '收起每日必做');
+  x.addEventListener('click', closeDaily);
+  bar.append(t, date, cnt, x);
+  el.appendChild(bar);
+
+  const list = document.createElement('div');
+  list.className = 'dd-sheet-list';
+  for (const it of DUTIES) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'dd-row';
+    row.dataset.key = it.key;
+    row.setAttribute('aria-pressed', 'false');
+    const box = document.createElement('span');
+    box.className = 'dd-box';
+    const s = document.createElementNS(SVG_NS, 'svg');
+    s.setAttribute('viewBox', '0 0 16 16');
+    const p = document.createElementNS(SVG_NS, 'path');
+    p.setAttribute('d', 'M3 8.4l3.3 3.3L13 5');
+    s.appendChild(p);
+    box.appendChild(s);
+    const name = document.createElement('span');
+    name.className = 'dd-rowname';
+    name.textContent = it.name;
+    row.append(box, name);
+    row.addEventListener('click', () => setDailyDone(it.key, !dailyUi.today[it.key]));
+    list.appendChild(row);
+  }
+  el.appendChild(list);
+
+  const foot = document.createElement('div');
+  foot.className = 'dd-sheet-foot';
+  const tip = document.createElement('span');
+  tip.className = 'dd-tip';
+  tip.textContent = '点一行算做一件，明天清零重来。';
+  foot.appendChild(tip);
+  el.appendChild(foot);
+
+  host.appendChild(el);
+}
+
+/* ---- 勾选后只改外观：按下与松手之间不许重建节点（CODING_STANDARDS《界面》）。
+   桌面与手机两套节点都在 dailyHost 里，各刷各的作用域 ---- */
+
+function paintDaily() {
+  const host = $('dailyHost');
+  const done = DUTIES.filter((it) => dailyUi.today[it.key]).length;
+  const full = done === DUTIES.length;
+
+  // 进度环与计数（桌面）
+  const fill = host.querySelector('.dd-ring .fill');
+  if (fill) {
+    const R = 26, C = 2 * Math.PI * R;
+    fill.setAttribute('stroke-dashoffset', C * (1 - done / DUTIES.length));
+  }
+  const num = host.querySelector('.dd-ringnum');
+  if (num) num.textContent = done + '/' + DUTIES.length;
+  const sum = host.querySelector('.dd-sum');
+  if (sum) {
+    let perfect = 0;
+    for (let d = 0; d < 7; d++) {
+      if (DUTIES.every((it) => (dailyUi.week[it.key] || [])[d])) perfect++;
+    }
+    sum.innerHTML = '近 7 天全勤 <b></b> 天<br>点卡片打卡，进度实时更新';
+    sum.querySelector('b').textContent = perfect;
+  }
+
+  // 每张卡 / 每行的完成态
+  for (const it of DUTIES) {
+    const on = !!dailyUi.today[it.key];
+    const card = host.querySelector(`.dd-card[data-key="${it.key}"]`);
+    if (card) {
+      card.classList.toggle('done', on);
+      card.setAttribute('aria-pressed', String(on));
+      const streak = card.querySelector('.dd-streak');
+      if (streak) streak.textContent = '连续 ' + dailyStreak(it.key) + ' 天';
+      const dots = card.querySelectorAll('.dd-dot');
+      const w = dailyUi.week[it.key] || [];
+      dots.forEach((dot, i) => dot.classList.toggle('hit', !!w[i]));
+    }
+    const row = host.querySelector(`.dd-row[data-key="${it.key}"]`);
+    if (row) {
+      row.classList.toggle('done', on);
+      row.setAttribute('aria-pressed', String(on));
+    }
+  }
+
+  // 手机抽层的计数与结语
+  const cnt = host.querySelector('.dd-cnt');
+  if (cnt) cnt.textContent = done + '/' + DUTIES.length;
+  const tip = host.querySelector('.dd-tip');
+  if (tip) tip.textContent = full ? '今天都做完了，明天再来。' : '点一行算做一件，明天清零重来。';
+
+  paintDailyEntries();
+}
+
+/* ---- 入口与键盘 ---- */
+
+$('dailyBtn').addEventListener('click', () => {
+  if (dailyUi.open) closeDaily();
+  else openDaily();
+});
+$('mDailyBtn').addEventListener('click', () => {
+  if (dailyUi.open) closeDaily();
+  else openDaily();
+});
+
+// Esc 收起每日必做。与规划窗、助手同一条 keydown 优先级链：编辑框 > 助手 > 规划窗 > 每日必做
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !dailyUi.open) return;
+  if ($('editor').open) return;
+  if (chatUi.busy) return;
+  closeDaily();
+});
+
+/* ============================ 助手 ============================
+   入口是右下角一枚立方体。点开是一个非模态浮窗：能一边看周轴上的条目，
+   一边确认它要写什么。它**不直接写库** —— 模型只出草案，草案摊开给用户看，
+   点「写入」之后才逐条走 POST。理由有两条：
+     1. 模型会编日期、编时段，直接写进去就是脏数据；
+     2. 写错了要一条条删，比多看一眼贵得多。
+   ============================================================ */
+
+const chatUi = {
+  open: false,
+  // 请求飞行中：挡重复发送，也让发送键有个可见的禁用态
+  busy: false,
+  // 位置只记内存，刷新回默认位（同规划窗的约定）
+  x: null,
+  y: null,
+  el: null,
+};
+
+// 会话历史（只留 user / assistant 的纯文本，草案不进历史）：每次请求发上去，
+// 让「那个改成下午」这种指代能接上。条数由服务端再截一次
+const chatMsgs = [];
+
+const CHAT_GREETING = '把要说的事直接倒给我。比如「下周要做一个海报培训，周三前出大纲」「明天下午三点跟张老师过一遍方案」。我看明白了就摆出来，你点头我再写。';
+
+function cubeMarkup() {
+  return '<span class="cube-3d">'
+    + '<span class="cube-top"></span>'
+    + '<span class="cube-wrapper">'
+    + '<span class="cube-span" style="--i:0"></span>'
+    + '<span class="cube-span" style="--i:1"></span>'
+    + '<span class="cube-span" style="--i:2"></span>'
+    + '<span class="cube-span" style="--i:3"></span>'
+    + '</span></span>';
+}
+
+function openChat() {
+  chatUi.open = true;
+  renderChat();
+  const ta = chatUi.el && chatUi.el.querySelector('.chat-in textarea');
+  // 手机上立刻聚焦会把键盘顶起来，盖掉大半个屏幕；桌面才自动落焦点
+  if (ta && !isNarrow()) ta.focus();
+}
+
+function closeChat() {
+  chatUi.open = false;
+  renderChat();
+}
+
+/* 键盘弹起时 .chat 的底边会被顶到键盘上面去。
+   100dvh 在 iOS 上不跟键盘走，所以用 visualViewport 算实时可视高度。
+   同一套机关在编辑框上已经用过一次（见 fitEditor）。 */
+function fitChat() {
+  const el = chatUi.el;
+  if (!el || !isNarrow()) return;
+  const vv = window.visualViewport;
+  const h = vv ? vv.height : window.innerHeight;
+  const top = vv ? vv.offsetTop : 0;
+  el.style.height = Math.min(h * 0.86, 640) + 'px';
+  el.style.bottom = 'auto';
+  el.style.top = Math.max(0, top + h - Math.min(h * 0.86, 640)) + 'px';
+}
+
+function renderChat() {
+  const old = chatUi.el;
+  if (old) { old.remove(); chatUi.el = null; }
+  const veilOld = document.querySelector('.chat-veil');
+  if (veilOld) veilOld.remove();
+  if (!chatUi.open) return;
+
+  if (isNarrow()) {
+    const veil = document.createElement('div');
+    veil.className = 'chat-veil';
+    veil.addEventListener('click', closeChat);
+    document.body.appendChild(veil);
+  }
+
+  const el = document.createElement('section');
+  el.className = 'chat';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'false');
+  el.setAttribute('aria-label', '助手');
+
+  /* --- 顶栏 --- */
+  const bar = document.createElement('div');
+  bar.className = 'chat-bar';
+  const mark = document.createElement('span');
+  mark.className = 'mark';
+  mark.innerHTML = cubeMarkup();
+  const t = document.createElement('span');
+  t.className = 't';
+  t.textContent = '助手';
+  const st = document.createElement('span');
+  st.className = 'st';
+  st.textContent = chatUi.busy ? '在想…' : '说给它听，它写成条目';
+  const sp = document.createElement('span');
+  sp.className = 'sp';
+
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'pw-btn';
+  close.title = '收起';
+  close.setAttribute('aria-label', '收起助手');
+  close.style.opacity = '1';
+  close.appendChild(planIcon('close'));
+  close.addEventListener('click', closeChat);
+
+  bar.append(mark.firstChild, t, st, sp, close);
+  el.appendChild(bar);
+
+  /* --- 消息流 --- */
+  const log = document.createElement('div');
+  log.className = 'chat-log';
+
+  if (!chatMsgs.length) {
+    const hint = document.createElement('p');
+    hint.className = 'chat-hint';
+    const b = document.createElement('b');
+    b.textContent = '能做什么';
+    hint.append(b, document.createTextNode(CHAT_GREETING));
+    log.appendChild(hint);
+  }
+
+  chatMsgs.forEach((m) => log.appendChild(bubble(m.role, m.content)));
+
+  // 已提出的草案：跟着它那轮的回答一起留着，写完变灰
+  drafts.forEach((d) => log.appendChild(draftCard(d)));
+
+  el.appendChild(log);
+
+  /* --- 输入 --- */
+  const inRow = document.createElement('div');
+  inRow.className = 'chat-in';
+
+  const ta = document.createElement('textarea');
+  ta.rows = 1;
+  ta.placeholder = chatUi.busy ? '等它说完…' : '要写点什么？';
+  ta.disabled = chatUi.busy;
+  ta.maxLength = 2000;
+  ta.addEventListener('input', () => {
+    // 跟着长高，到上限就内部滚（auto-grow，不做一次性的固定高度）
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 132) + 'px';
+  });
+  ta.addEventListener('keydown', (e) => {
+    // Enter 发送，Shift+Enter 换行。输入法组合中的 Enter 不算（打中文时选词就在按它）
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      sendChat(ta.value);
+    }
+  });
+
+  const send = document.createElement('button');
+  send.type = 'button';
+  send.className = 'chat-send';
+  send.title = '发送';
+  send.setAttribute('aria-label', '发送');
+  send.disabled = chatUi.busy;
+  const arrow = document.createElementNS(SVG_NS, 'svg');
+  arrow.setAttribute('viewBox', '0 0 16 16');
+  arrow.setAttribute('class', 'ico');
+  arrow.setAttribute('aria-hidden', 'true');
+  const ap = document.createElementNS(SVG_NS, 'path');
+  ap.setAttribute('d', 'M8 13V3.4M3.6 7.8L8 3.4l4.4 4.4');
+  arrow.appendChild(ap);
+  send.appendChild(arrow);
+  send.addEventListener('click', () => sendChat(ta.value));
+
+  inRow.append(ta, send);
+  el.appendChild(inRow);
+
+  if (!isNarrow()) chatDragify(el, bar);
+  placeChat(el);
+  document.body.appendChild(el);
+  chatUi.el = el;
+
+  // 新内容落地后滚到底，但别把用户正在往回翻的视线硬拽回来
+  const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  if (nearBottom || chatUi.busy) log.scrollTop = log.scrollHeight;
+  if (isNarrow()) fitChat();
+}
+
+function bubble(role, text, cls) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + (cls || (role === 'user' ? 'me' : 'bot'));
+  d.textContent = text;
+  return d;
+}
+
+function dotsBubble() {
+  const d = document.createElement('div');
+  d.className = 'msg dots';
+  for (let i = 0; i < 3; i++) d.appendChild(document.createElement('i'));
+  return d;
+}
+
+/* 草案：服务端已经逐条校验过（日期真实、slot 合法、标题非空），
+   这里只负责说清楚「写到哪天哪一段」，以及它是不是眼下这张纸上的一周。 */
+let drafts = [];
+let draftSeq = 0;
+
+function slotLabel(slot) {
+  return D.SLOT_LABELS[slot] || slot;
+}
+
+function draftCard(d) {
+  const card = document.createElement('div');
+  card.className = 'draft' + (d.written ? ' done' : '');
+
+  const head = document.createElement('div');
+  head.className = 'draft-h';
+  const hb = document.createElement('b');
+  hb.textContent = d.written ? '已写入' : '准备这样写';
+  const total = d.items.length + d.plans.length;
+  const hn = document.createElement('span');
+  hn.textContent = total + ' 条';
+  head.append(hb, hn);
+  card.appendChild(head);
+
+  d.plans.forEach((p) => {
+    const row = document.createElement('div');
+    row.className = 'draft-row' + (p.week === isoWeek(weekStart) ? '' : ' off');
+    const k = document.createElement('span');
+    k.className = 'draft-k';
+    // 只留 W47：整年写在索引列里既占宽也没信息（一周之内不会有第二个年份）
+    k.textContent = p.week.slice(p.week.indexOf('-') + 1);
+    const v = document.createElement('span');
+    v.className = 'draft-v';
+    const dt = document.createElement('span');
+    dt.className = 'dt';
+    dt.textContent = '周规划 · ' + p.title;
+    v.appendChild(dt);
+    if (p.note) {
+      const dn = document.createElement('div');
+      dn.className = 'dn';
+      dn.textContent = p.note;
+      v.appendChild(dn);
+    }
+    row.append(k, v);
+    card.appendChild(row);
+  });
+
+  d.items.forEach((it) => {
+    const row = document.createElement('div');
+    row.className = 'draft-row';
+    const k = document.createElement('span');
+    k.className = 'draft-k';
+    const dt = parseYmd(it.date);
+    k.textContent = monthDay(dt) + ' ' + slotLabel(it.slot);
+    const v = document.createElement('span');
+    v.className = 'draft-v';
+    const t1 = document.createElement('span');
+    t1.className = 'dt';
+    t1.textContent = it.title;
+    v.appendChild(t1);
+    if (it.note) {
+      const dn = document.createElement('div');
+      dn.className = 'dn';
+      dn.textContent = it.note;
+      v.appendChild(dn);
+    }
+    row.append(k, v);
+    card.appendChild(row);
+  });
+
+  const foot = document.createElement('div');
+  foot.className = 'draft-foot';
+  const note = document.createElement('span');
+  note.className = 'draft-note';
+  /* 写在眼前这张纸之外的时候必须说清楚 —— 否则点完「写入」纸上毫无变化，
+     会被当成没写成功。按周说，比按条说更省字。 */
+  const here = isoWeek(weekStart);
+  const away = [];
+  d.plans.forEach((p) => { if (p.week !== here && !away.includes(p.week)) away.push(p.week); });
+  d.items.forEach((it) => {
+    const w = isoWeek(parseYmd(it.date));
+    if (w !== here && !away.includes(w)) away.push(w);
+  });
+  if (!d.written && away.length) {
+    note.textContent = '落在 ' + away.map((w) => w.slice(w.indexOf('-') + 1)).join('、') + '，不在这张纸上';
+    note.classList.add('off');
+  }
+  const sp = document.createElement('span');
+  sp.className = 'sp';
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'btn primary';
+  go.textContent = '写入';
+  go.addEventListener('click', () => writeDraft(d, go));
+  foot.append(note, sp, go);
+  card.appendChild(foot);
+
+  return card;
+}
+
+async function sendChat(raw) {
+  const text = String(raw || '').trim();
+  if (!text || chatUi.busy) return;
+
+  chatMsgs.push({ role: 'user', content: text });
+  chatUi.busy = true;
+  renderChat();
+
+  const log = chatUi.el.querySelector('.chat-log');
+  const dots = dotsBubble();
+  log.appendChild(dots);
+  log.scrollTop = log.scrollHeight;
+
+  try {
+    const r = await api('/api/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        // 只送纯文本历史；草案是我们自己的东西，模型不需要看
+        messages: chatMsgs.slice(-12).map((m) => ({ role: m.role, content: m.content })),
+      }),
+    });
+
+    chatMsgs.push({ role: 'assistant', content: r.reply });
+    if (r.dropped) {
+      toast(r.dropped + ' 条没听懂时间，跳过了');
+    }
+    const hasDraft = r.draft && (r.draft.items.length || r.draft.plans.length);
+    if (hasDraft) {
+      drafts.push({ id: ++draftSeq, items: r.draft.items, plans: r.draft.plans, written: false });
+      markDraftHint();
+    }
+  } catch (err) {
+    // 报错留在对话里而不是 toast：用户往往要照着这句话改内容再发一次
+    chatMsgs.push({ role: 'assistant', content: err.message });
+  } finally {
+    chatUi.busy = false;
+    renderChat();
+    const ta = chatUi.el && chatUi.el.querySelector('.chat-in textarea');
+    if (ta && !isNarrow()) ta.focus();
+  }
+}
+
+// 有未写入的草案时让立方体喘气（桌面那枚；手机入口没有这块空间）
+function markDraftHint() {
+  const entry = $('cubeEntry');
+  if (entry) entry.classList.toggle('has-draft', drafts.some((d) => !d.written));
+}
+
+/* 写入：逐条走现有的 POST，不新开批量接口。
+   一是复用同一套校验（标题截断、slot 白名单都在服务端），
+   二是写失败时能精确知道停在哪一条 —— 批量接口只会整单失败。 */
+async function writeDraft(d, btn) {
+  if (d.written) return;
+  const total = d.items.length + d.plans.length;
+  btn.disabled = true;
+  btn.textContent = '写入中…';
+
+  let done = 0;
+  try {
+    for (const p of d.plans) {
+      await api('/api/plan', { method: 'POST', body: JSON.stringify(p) });
+      done++;
+    }
+    for (const it of d.items) {
+      await api('/api/items', {
+        method: 'POST',
+        body: JSON.stringify({ date: it.date, slot: it.slot, title: it.title, note: it.note || '' }),
+      });
+      done++;
+    }
+
+    d.written = true;
+    markDraftHint();
+    toast('写入 ' + total + ' 条');
+
+    // 写完要让两张表都跟上：安排与规划各有一份内存副本，
+    // 而且可能有一半落在下周 —— 直接按服务端重取，别在本地拼
+    await refresh();
+    renderChat();
+  } catch (err) {
+    toast(err.message);
+    // 已经写进去的那几条是真的，留个记号，避免用户再点一次写重复
+    if (done) {
+      d.written = true;
+      d.items = [];
+      d.plans = [];
+      markDraftHint();
+    }
+    await refresh();
+    renderChat();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '写入';
+  }
+}
+
+/* 拖：只有桌面需要（手机是底部抽屉，把手点不准也没必要拖） */
+function chatDragify(el, handle) {
+  let d = null;
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const r = el.getBoundingClientRect();
+    d = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top };
+    el.classList.add('dragging');
+    handle.setPointerCapture(e.pointerId);
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!d || e.pointerId !== d.id) return;
+    chatUi.x = Math.max(6, Math.min(e.clientX - d.dx, window.innerWidth - el.offsetWidth - 6));
+    chatUi.y = Math.max(6, Math.min(e.clientY - d.dy, window.innerHeight - el.offsetHeight - 6));
+    el.style.left = chatUi.x + 'px';
+    el.style.top = chatUi.y + 'px';
+    el.style.right = 'auto';
+    el.style.bottom = 'auto';
+  });
+  const end = () => { d = null; el.classList.remove('dragging'); };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+}
+
+function placeChat(el) {
+  if (isNarrow()) return;   // 手机靠 CSS 定位，见 .chat 的窄屏段
+  if (chatUi.x === null) return;   // 没拖过就交给 CSS 的右下角
+  el.style.left = chatUi.x + 'px';
+  el.style.top = chatUi.y + 'px';
+  el.style.right = 'auto';
+  el.style.bottom = 'auto';
+}
+
+$('cubeEntry').addEventListener('click', () => {
+  if (chatUi.open) closeChat();
+  else openChat();
+});
+$('mChatBtn').addEventListener('click', () => {
+  if (chatUi.open) closeChat();
+  else openChat();
+});
+
+if (window.visualViewport) window.visualViewport.addEventListener('resize', fitChat);
+
+// Esc 收起助手。放在这里而不是合并进下面那个 keydown：
+// 那个 keydown 在输入框里有内容时提前 return，Esc 就永远收不掉窗
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !chatUi.open) return;
+  if ($('editor').open) return;   // 编辑框开着时 Esc 归它
+  if (chatUi.busy) return;        // 请求飞行中收起会丢回执，先等它说完
+  closeChat();
 });
 
 renderSlotPicker();

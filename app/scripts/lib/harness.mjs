@@ -83,11 +83,18 @@ export async function startHarness({ work, port, windowSize = '1440,900', fixtur
   }
   if (!up) { await stop(); throw new Error('服务没起来'); }
 
-  // 浏览器开口：调试端口写在 DevToolsActivePort 第一行
+  // 浏览器开口：调试端口写在 DevToolsActivePort 第一行。
+  // 端口要真活着才算数 —— rmrf 失败留下的旧文件指向死端口，读到了也不能用
   let dbg = 0;
   for (let i = 0; i < 60; i++) {
     const f = path.join(PROFILE, 'DevToolsActivePort');
-    if (fs.existsSync(f)) { dbg = Number(fs.readFileSync(f, 'utf8').split('\n')[0]); if (dbg) break; }
+    if (fs.existsSync(f)) {
+      const v = Number(fs.readFileSync(f, 'utf8').split('\n')[0]);
+      if (v) {
+        try { await fetch(`http://127.0.0.1:${v}/json/version`); dbg = v; break; }
+        catch (_) { /* 死端口，等浏览器写新的 */ }
+      }
+    }
     await sleep(200);
   }
   if (!dbg) { await stop(); throw new Error('浏览器没开调试端口'); }

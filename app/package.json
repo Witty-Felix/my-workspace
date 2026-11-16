@@ -15,6 +15,8 @@
     "smoke:done": "node scripts/smoke-done.mjs",
     "smoke:plan": "node scripts/smoke-plan.mjs",
     "smoke:plan-mobile": "node scripts/smoke-plan-mobile.mjs",
+    "smoke:daily": "node scripts/smoke-daily.mjs",
+    "smoke:chat": "node scripts/smoke-chat.mjs",
     "shot": "node scripts/shot.mjs"
   },
   "dependencies": {

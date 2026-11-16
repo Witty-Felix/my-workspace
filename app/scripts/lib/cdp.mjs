@@ -1,6 +1,13 @@
 // 自检共用：找浏览器、发触屏事件。
 import fs from 'node:fs';
 
+// 自检全部打 127.0.0.1，代理只会把它们劫到别处（本机开着全局代理时
+// smoke:drag/done 偶发 fetch failed 就是它）。Node 的 fetch 认小写 no_proxy，
+// 两个大小写都补上，别让环境变量决定自检能不能跑。
+for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) delete process.env[k];
+process.env.NO_PROXY = '127.0.0.1,localhost,::1';
+process.env.no_proxy = '127.0.0.1,localhost,::1';
+
 export function findBrowser() {
   return [
     process.env.CHROME_BIN, process.env.EDGE_BIN,

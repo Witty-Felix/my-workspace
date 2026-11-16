@@ -1,37 +1,60 @@
-@@ -198,7 +198,35 @@
+@@ -51,6 +51,7 @@
+ </button>
+ <button class="ic" id="next" aria-label="下一周">›</button>
+ <button class="tag" id="planBtn" aria-pressed="false">规划</button>
++<button class="tag" id="dailyBtn" aria-pressed="false" title="每日必做（还差 4 项）">必做</button>
+ <button class="tag on" id="todayBtn">本周</button>
+ </nav>
+ <label class="hs hs--sm" title="白天 / 夜间">
+@@ -104,6 +105,27 @@
  </div>
  </div>
- </section>
--<section class="phone" id="phone" aria-label="按天查看">
-+<!-- 手机端：规划与当天各一页，标签切换。桌面上这两个节点被 CSS 隐藏 -->
-+<div class="mtabs" id="mTabs" role="tablist">
-+<button class="mtab on" role="tab" aria-selected="true" data-page="plan" id="mtabPlan">规划<span class="mtab-n" id="mPlanCount">
+ </label>
++<!-- 每日必做入口（手机）。桌面那个是顶栏「必做」标签，窄屏 .nav 整条隐藏，
++入口不能跟着消失（同 mChatBtn 的理由，ADR-0010） -->
++<button class="ic mdaily-btn" id="mDailyBtn" aria-label="每日必做" title="每日必做">日</button>
++<!-- 助手入口（手机）。桌面那个是右下角立方体，见 body 末尾。
++放在 .bar 里而不是 .nav 里：窄屏 .nav 整条 display:none，入口不能跟着消失 -->
++<button class="mchat-btn" id="mChatBtn" aria-label="跟我说话，我帮你写进周轴" title="跟我说话">
++<span class="cube-3d">
++<span class="cube-top">
++</span>
++<span class="cube-wrapper">
++<span class="cube-span" style="--i:0">
++</span>
++<span class="cube-span" style="--i:1">
++</span>
++<span class="cube-span" style="--i:2">
++</span>
++<span class="cube-span" style="--i:3">
++</span>
++</span>
 +</span>
 +</button>
-+<button class="mtab" role="tab" aria-selected="false" data-page="week" id="mtabWeek">当天</button>
+ </header>
+ <main class="stage">
+ <section class="sheet" id="week" aria-label="本周安排">
+@@ -320,5 +342,23 @@
+ </div>
+ </form>
+ </dialog>
++<div id="dailyHost">
 +</div>
-+<section class="mplan" id="mPlan" aria-label="周规划">
-+<div class="pw-card">
-+<div class="pw-card-head">
-+<span class="pw-card-t" id="mPlanTitle">本周规划</span>
-+<span class="pw-card-n" id="mPlanNum">空</span>
-+<span class="sp">
++<button class="cube-entry" id="cubeEntry" aria-label="打开助手，把话写成安排" title="跟我说话">
++<span class="cube-3d">
++<span class="cube-top">
 +</span>
-+<span class="pw-card-saved" id="mPlanSaved">已保存</span>
-+</div>
-+<div class="pw-card-list" id="mPlanList">
-+<p class="pw-card-empty">这一周还没写。加一条开始。</p>
-+</div>
-+<button type="button" class="pw-card-add" id="mPlanAdd">
-+<svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true">
-+<path d="M8 3.2v9.6M3.2 8h9.6">
-+</path>
-+</svg>
-+添加一条
++<span class="cube-wrapper">
++<span class="cube-span" style="--i:0">
++</span>
++<span class="cube-span" style="--i:1">
++</span>
++<span class="cube-span" style="--i:2">
++</span>
++<span class="cube-span" style="--i:3">
++</span>
++</span>
++</span>
 +</button>
-+</div>
-+</section>
-+<section class="phone" id="phone" aria-label="按天查看" hidden="">
- <div class="phone-week">
- <button class="ic" id="pPrevW" aria-label="上一周">‹</button>
- <div class="strip" id="pStrip" role="group" aria-label="选择日期">
+ </body>
+ </html>

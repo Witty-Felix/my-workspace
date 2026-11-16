@@ -7,6 +7,8 @@ const crypto = require('crypto');
 const { SLOTS, compareArrangements, groupKey, byOrder, normalizeOrder, placeItem } = require('./lib/domain');
 // 存储层：安排数据怎么落盘、怎么读回（app/lib/store.js）
 const store = require('./lib/store');
+// 助手：把口语变成草案。只出草案不落库（app/lib/assistant.js）
+const assistant = require('./lib/assistant');
 
 const PORT = Number(process.env.PORT || 8090);
 const AUTH_USER = process.env.AUTH_USER || '';
@@ -130,7 +132,7 @@ app.post('/api/items', (req, res) => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  const next = store.envelope(db.items.concat(item), db.plans);
+  const next = store.envelope(db.items.concat(item), db.plans, db.duties);
   normalizeOrder(next.items);
   store.save(next);
   res.status(201).json({ item });
@@ -156,7 +158,7 @@ app.patch('/api/items/:id', (req, res) => {
   if (b.done === false) delete item.doneAt;
   item.updatedAt = new Date().toISOString();
 
-  const next = store.envelope(db.items, db.plans);
+  const next = store.envelope(db.items, db.plans, db.duties);
   normalizeOrder(next.items);
   store.save(next);
   res.json({ item });
@@ -168,7 +170,7 @@ app.delete('/api/items/:id', (req, res) => {
   if (idx < 0) return res.status(404).json({ error: '不存在' });
   const items = db.items.slice();
   items.splice(idx, 1);
-  const next = store.envelope(items, db.plans);
+  const next = store.envelope(items, db.plans, db.duties);
   normalizeOrder(next.items);
   store.save(next);
   res.json({ ok: true });
@@ -194,7 +196,7 @@ app.post('/api/items/:id/move', (req, res) => {
   item.order = other.order;
   other.order = tmp;
 
-  const next = store.envelope(db.items, db.plans);
+  const next = store.envelope(db.items, db.plans, db.duties);
   normalizeOrder(next.items);
   store.save(next);
   res.json({ item, moved: true });
@@ -211,7 +213,7 @@ app.post('/api/items/:id/place', (req, res) => {
   const db = store.load();
   if (!db.items.some((it) => it.id === req.params.id)) return res.status(404).json({ error: '不存在' });
 
-  const next = store.envelope(db.items, db.plans);
+  const next = store.envelope(db.items, db.plans, db.duties);
   placeItem(next.items, req.params.id, b.date, b.slot, b.index);
   const item = next.items.find((it) => it.id === req.params.id);
   item.updatedAt = new Date().toISOString();
@@ -254,7 +256,7 @@ app.post('/api/plan', (req, res) => {
   // 建的时候就能带完成状态：前端新增后立刻勾选，不该等下一次 PATCH
   if (b.done === true) plan.doneAt = now;
 
-  const next = store.envelope(db.items, db.plans.concat(plan));
+  const next = store.envelope(db.items, db.plans.concat(plan), db.duties);
   store.save(next);
   res.status(201).json({ plan });
 });
@@ -282,7 +284,7 @@ app.patch('/api/plan/:id', (req, res) => {
   if (b.done === false) delete plan.doneAt;
   plan.updatedAt = new Date().toISOString();
 
-  store.save(store.envelope(db.items, db.plans));
+  store.save(store.envelope(db.items, db.plans, db.duties));
   res.json({ plan });
 });
 
@@ -292,8 +294,72 @@ app.delete('/api/plan/:id', (req, res) => {
   if (idx < 0) return res.status(404).json({ error: '不存在' });
   const plans = db.plans.slice();
   plans.splice(idx, 1);
-  store.save(store.envelope(db.items, plans));
+  store.save(store.envelope(db.items, plans, db.duties));
   res.json({ ok: true });
+});
+
+/* ---------- 每日必做 ----------
+   四项每天固定（戒色 / 读书 / 离开整理桌面 / 每日一善），不增删。
+   存的是完成记录：哪一天、哪一项、何时完成（见 ADR-0010）。
+   「每日更新」是查询语义 —— 取某天就按 day 过滤，历史照留，不做清零删除。 */
+
+const DUTY_KEYS = ['jieSe', 'read', 'tidy', 'kind'];
+
+// 取完成记录：单日（?day=）或区间（?from=&to=，近 7 日点阵用）。二选一。
+// 「每日更新」是查询语义 —— 按区间过滤即得历史，不做清零删除
+app.get('/api/duties', (req, res) => {
+  const { day, from, to } = req.query;
+  const db = store.load();
+  if (day !== undefined) {
+    if (!isDate(day)) return res.status(400).json({ error: 'day 需为 YYYY-MM-DD' });
+    return res.json({ duties: db.duties.filter((d) => d.day === day) });
+  }
+  if (!isDate(from) || !isDate(to)) return res.status(400).json({ error: 'from/to 需为 YYYY-MM-DD' });
+  if (from > to) return res.status(400).json({ error: 'from 不能晚于 to' });
+  res.json({ duties: db.duties.filter((d) => d.day >= from && d.day <= to) });
+});
+
+// 勾/取消一项：upsert 到当天的记录。key 白名单，day 必填
+app.patch('/api/duties/:key', (req, res) => {
+  const key = req.params.key;
+  if (!DUTY_KEYS.includes(key)) return res.status(400).json({ error: 'key 非法' });
+  const b = req.body || {};
+  if (!isDate(b.day)) return res.status(400).json({ error: 'day 需为 YYYY-MM-DD' });
+  if (typeof b.done !== 'boolean') return res.status(400).json({ error: 'done 需为布尔值' });
+
+  const db = store.load();
+  const rec = db.duties.find((d) => d.day === b.day && d.key === key);
+
+  if (b.done) {
+    // 幂等：重复完成保持第一次的时间戳（同 ADR-0007 的 doneAt）
+    if (rec) { rec.doneAt = rec.doneAt || new Date().toISOString(); }
+    else {
+      db.duties.push({ day: b.day, key, doneAt: new Date().toISOString() });
+    }
+  } else if (rec) {
+    const i = db.duties.indexOf(rec);
+    db.duties.splice(i, 1);
+  }
+
+  store.save(store.envelope(db.items, db.plans, db.duties));
+  res.json({ ok: true });
+});
+
+
+/* ---------- 助手 ----------
+   只做「白话 → 草案」。草案不落库：写库仍走上面那几个 REST 动词，
+   由用户在界面上确认之后逐条发出。所以这条路由只读，不动 data.json。 */
+
+app.post('/api/chat', async (req, res, next) => {
+  const b = req.body || {};
+  if (!Array.isArray(b.messages)) return res.status(400).json({ error: 'messages 需为数组' });
+  try {
+    const out = await assistant.ask(b.messages);
+    res.json(out);
+  } catch (err) {
+    if (err instanceof assistant.AssistantError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
 });
 
 app.get('/api/export', (req, res) => {
