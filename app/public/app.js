@@ -1895,12 +1895,12 @@ document.addEventListener('keydown', (e) => {
    是第三种内容单位：不落位、不归属周，只归属到某一天（见 ADR-0010）。
 
    两端刻意不同形（CODING_STANDARDS《两端》）：
-     桌面 = B 抽屉（右侧全高）：进度环 + 每卡连续天数与近 7 日点阵，重「轨迹激励」
+     桌面 = B 抽屉（右侧全高）：进度环 + 每卡连续天数与本周点阵，重「轨迹激励」
      手机 = A 抽层（底部升起）：四行大勾选，重「睡前快速过一遍」
    共用同一份 duties 数据、同一条写队列。
 
    「每日更新」是查询语义：取某天就按 day 过滤，不做清零删除。
-   近 7 日点阵由 GET /api/duties?from&to 一次带回，不逐天发请求。 */
+   本周点阵由 GET /api/duties?from&to 一次带回，不逐天发请求。 */
 
 const DUTIES = [
   { key: 'jieSe', name: '戒色', glyph: '戒' },
@@ -1929,8 +1929,9 @@ function dailyTodayYmd() {
 // 点阵是「本周一 → 周日」七格，今天落在自己那一天的位置，不是最近七天滚动窗
 async function loadDaily() {
   const day = dailyTodayYmd();
-  const from = ymd(startOfWeek(new Date()));
-  const to = ymd(addDays(startOfWeek(new Date()), 6));
+  const ws = startOfWeek(new Date());
+  const from = ymd(ws);
+  const to = ymd(addDays(ws, 6));
   try {
     const [today, week] = await Promise.all([
       api(`/api/duties?day=${day}`),
@@ -2033,7 +2034,7 @@ function paintDailyEntries() {
   }
 }
 
-/* ---- 桌面：B 抽屉（右侧全高，进度环 + 连续天数 + 近 7 日点阵） ---- */
+/* ---- 桌面：B 抽屉（右侧全高，进度环 + 连续天数 + 本周点阵） ---- */
 
 function renderDailyDrawer(host) {
   const back = document.createElement('div');

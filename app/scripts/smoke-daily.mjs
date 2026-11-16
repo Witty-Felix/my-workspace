@@ -191,10 +191,17 @@ await sleep(600);
 if ((await js(`document.querySelector('.dd-ringnum').textContent`)) === '3/4') ok('取消+刷新：3/4（取消也落盘）');
 else bad('取消+刷新：计数不是 3/4');
 
-// 近 7 日点阵：今天的取消后最后一位应该是空
+// 本周点阵：取消后今天那一格应该是空
 const todayDot = await js(`!!document.querySelector('.dd-card[data-key="read"] .dd-dot.today.hit')`);
 if (!todayDot) ok('点阵：取消后今天的点熄灭');
 else bad('点阵：取消后今天的点还亮着');
+
+// 点阵是本周一→周日，今天必须在自己那一位（周一 0 … 周日 6）。
+// 只查「今天那格亮」抓不住回退成滚动窗——滚动窗里今天在最右也会亮
+const weekdayIdx = (new Date().getDay() + 6) % 7;
+const todayPos = await js(`[...document.querySelectorAll('.dd-card[data-key="read"] .dd-dot')].findIndex((d) => d.classList.contains('today'))`);
+if (todayPos === weekdayIdx) ok(`点阵：今天在周内第 ${weekdayIdx + 1} 格（自然周口径）`);
+else bad(`点阵：今天在第 ${todayPos + 1} 格，应为第 ${weekdayIdx + 1} 格（疑似退回滚动窗）`);
 
 // 收起，准备手机端
 await js(`document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))`);

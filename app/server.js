@@ -303,7 +303,7 @@ app.delete('/api/plan/:id', (req, res) => {
 
 const DUTY_KEYS = ['jieSe', 'read', 'tidy', 'kind'];
 
-// 取完成记录：单日（?day=）或区间（?from=&to=，近 7 日点阵用）。二选一。
+// 取完成记录：单日（?day=）或区间（?from=&to=，本周点阵用）。二选一。
 // 「每日更新」是查询语义 —— 按区间过滤即得历史，不做清零删除
 app.get('/api/duties', (req, res) => {
   const { day, from, to } = req.query;
