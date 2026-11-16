@@ -1903,7 +1903,7 @@ document.addEventListener('keydown', (e) => {
    近 7 日点阵由 GET /api/duties?from&to 一次带回，不逐天发请求。 */
 
 const DUTIES = [
-  { key: 'jieSe', name: '戒色', glyph: '静' },
+  { key: 'jieSe', name: '戒色', glyph: '戒' },
   { key: 'read', name: '读书', glyph: '读' },
   { key: 'tidy', name: '离开整理桌面', glyph: '整' },
   { key: 'kind', name: '每日一善', glyph: '善' },
@@ -1915,20 +1915,22 @@ const dailyUi = {
   open: false,
   // 今天四项的完成时间戳，key -> doneAt。隔日由服务端按 day 过滤，天然清零
   today: {},
-  // 近 7 日打卡记录，key -> [6 天前..昨天..今天] 的布尔数组（点阵用）
+  // 本周打卡记录，key -> [周一..周日] 的布尔数组（点阵用）
   week: {},
+  // 这批数据是哪一天拉的。心跳据此判断要不要重拉（跨天/跨周都靠它）
+  _day: '',
 };
 
 function dailyTodayYmd() {
   return ymd(new Date());
 }
 
-// 首次打开/跨天重开时拉数据。两个请求：今天（勾选态）+ 近7天（点阵）。
-// 今天的也能从 week 里取，但分开发能让「打开即勾选态」不等第二个请求
+// 首次打开/跨天重开时拉数据。两个请求：今天（勾选态）+ 本周（点阵）。
+// 点阵是「本周一 → 周日」七格，今天落在自己那一天的位置，不是最近七天滚动窗
 async function loadDaily() {
   const day = dailyTodayYmd();
-  const from = ymd(addDays(new Date(), -6));
-  const to = day;
+  const from = ymd(startOfWeek(new Date()));
+  const to = ymd(addDays(startOfWeek(new Date()), 6));
   try {
     const [today, week] = await Promise.all([
       api(`/api/duties?day=${day}`),
@@ -1937,7 +1939,7 @@ async function loadDaily() {
     if (dailyTodayYmd() !== day) return;   // 打开期间跨天了，扔掉旧数据
     dailyUi.today = {};
     for (const d of today.duties || []) dailyUi.today[d.key] = d.doneAt;
-    // 近 7 天点阵：服务端返回区间内的记录，这里摊成 key -> 7 布尔
+    // 本周点阵：服务端返回区间内的记录，这里摊成 key -> 7 布尔
     dailyUi.week = {};
     for (const it of DUTIES) dailyUi.week[it.key] = new Array(7).fill(false);
     for (const d of week.duties || []) {
@@ -1949,8 +1951,14 @@ async function loadDaily() {
   }
 }
 
+// 今天在本周点阵里的位数（周一 0，周日 6），也给 dailyStreak 用
+function todayDotIndex() {
+  return Math.round((parseYmd(dailyTodayYmd()) - startOfWeek(new Date())) / 86400000);
+}
+
 async function openDaily() {
   dailyUi.open = true;
+  dailyUi._day = dailyTodayYmd();   // 记下这次拉的是哪一天，心跳据此判断要不要重拉
   // 先拉数据再一次成型，不画空窗：网络慢时宁可晚半拍，也别闪一下空→满
   await loadDaily();
   renderDaily();
@@ -1968,9 +1976,9 @@ function setDailyDone(key, done) {
   } else {
     delete dailyUi.today[key];
   }
-  // 近 7 天点阵的最后一位就是今天，同步改，不用重拉
+  // 本周点阵里今天那一格，同步改，不用重拉
   const w = dailyUi.week[key];
-  if (w) w[6] = !!done;
+  if (w) w[todayDotIndex()] = !!done;
   paintDaily();
 
   enqueueWrite(async () => {
@@ -2082,6 +2090,8 @@ function renderDailyDrawer(host) {
 
   const list = document.createElement('div');
   list.className = 'dd-list';
+  // 今天在点阵里的位数：一个窗口算一次，别在每个点的循环里反复取时间
+  const todayIdx = todayDotIndex();
   for (const it of DUTIES) {
     const card = document.createElement('button');
     card.type = 'button';
@@ -2106,7 +2116,7 @@ function renderDailyDrawer(host) {
     dots.className = 'dd-dots';
     for (let i = 0; i < 7; i++) {
       const dot = document.createElement('i');
-      dot.className = 'dd-dot' + (i === 6 ? ' today' : '');
+      dot.className = 'dd-dot' + (i === todayIdx ? ' today' : '');
       dots.appendChild(dot);
     }
     main.append(line1, dots);
@@ -2118,11 +2128,11 @@ function renderDailyDrawer(host) {
   host.appendChild(el);
 }
 
-// 连续天数：点阵从今天往回数连续命中
+// 连续天数：从今天那一格往回数连续命中（周内断在周一之前就停，不跨周算）
 function dailyStreak(key) {
   const w = dailyUi.week[key] || [];
   let n = 0;
-  for (let i = 6; i >= 0; i--) {
+  for (let i = todayDotIndex(); i >= 0; i--) {
     if (!w[i]) break;
     n++;
   }
@@ -2216,7 +2226,7 @@ function paintDaily() {
     for (let d = 0; d < 7; d++) {
       if (DUTIES.every((it) => (dailyUi.week[it.key] || [])[d])) perfect++;
     }
-    sum.innerHTML = '近 7 天全勤 <b></b> 天<br>点卡片打卡，进度实时更新';
+    sum.innerHTML = '本周全勤 <b></b> 天<br>点卡片打卡，进度实时更新';
     sum.querySelector('b').textContent = perfect;
   }
 
